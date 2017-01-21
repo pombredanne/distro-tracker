@@ -1,10 +1,10 @@
 # Copyright 2013 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 """
@@ -14,7 +14,7 @@ files in the :class:`distro_tracker.core.panels.VersionedLinks` panel.
 from __future__ import unicode_literals
 from distro_tracker.core.panels import VersionedLinks
 from distro_tracker.core.models import ExtractedSourceFile
-from django.utils.safestring import mark_safe
+from distro_tracker.core.templatetags.distro_tracker_extras import octicon
 
 
 class SourceFilesLinkProvider(VersionedLinks.LinkProvider):
@@ -23,10 +23,10 @@ class SourceFilesLinkProvider(VersionedLinks.LinkProvider):
     :class:`distro_tracker.core.panels.VersionedLinks` panel.
     """
     icons = [
-        mark_safe('<i class="icon-plus-sign" title="changelog"></i>'),
-        mark_safe('<i class="icon-pencil" title="copyright"></i>'),
-        mark_safe('<i class="icon-cog" title="rules"></i>'),
-        mark_safe('<i class="icon-info-sign" title="control"></i>'),
+        octicon('tasklist', 'changelog'),
+        octicon('law', 'copyright'),
+        octicon('tools', 'rules'),
+        octicon('package', 'control'),
     ]
 
     _file_names = [

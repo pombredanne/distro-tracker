@@ -2,11 +2,11 @@
 
 # Copyright 2013-2015 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 
@@ -52,7 +52,6 @@ from distro_tracker.vendor.debian.rules import classify_message
 from distro_tracker.vendor.debian.tracker_tasks import UpdateNewQueuePackages
 from distro_tracker.vendor.debian.tracker_tasks import UpdateWnppStatsTask
 from distro_tracker.vendor.debian.tracker_tasks import UpdateUbuntuStatsTask
-from distro_tracker.vendor.debian.tracker_tasks import UpdateReleaseGoalsTask
 from distro_tracker.vendor.debian.tracker_tasks import UpdateSecurityIssuesTask
 from distro_tracker.vendor.debian.tracker_tasks import UpdatePiuPartsTask
 from distro_tracker.vendor.debian.tracker_tasks import UpdateBuildLogCheckStats
@@ -90,7 +89,6 @@ from email.message import Message
 from bs4 import BeautifulSoup as soup
 
 import os
-import yaml
 import json
 import logging
 
@@ -216,6 +214,17 @@ class DispatchDebianSpecificTest(TestCase, DispatchTestHelperMixin):
         pkg, keyword = self.run_classify()
         self.assertListEqual(pkg, ['a', 'b', 'c', 'd'])
 
+    def test_classify_bts_mail_does_not_override_suggestion(self):
+        """
+        This case ensures that we can send a X-Debbugs-Cc copy of a bug report
+        to another maintainer via pkg-foo@packages.debian.org and still get the
+        bug forwarded to the pkg-foo subscribers under the contact keyword.
+        """
+        self.define_bts_mail('release.debian.org', source=None)
+        pkg, keyword = self.run_classify('pkg-foo', 'contact')
+        self.assertEqual(pkg, 'pkg-foo')
+        self.assertEqual(keyword, 'contact')
+
     def define_dak_mail(self, package='foo', subject=None,
                         dak_cmd='dak process-upload'):
         self.set_header('X-DAK', dak_cmd)
@@ -314,6 +323,24 @@ class DispatchDebianSpecificTest(TestCase, DispatchTestHelperMixin):
         self.assertEqual(self.package.news_set.count(), 0)
         pkg, keyword = self.run_classify()
         self.assertEqual(self.package.news_set.count(), 1)
+
+    def test_classify_git_mail(self):
+        self.add_header('X-Git-Repo', self.package_name)
+        pkg, keyword = self.run_classify()
+        self.assertEqual(pkg, self.package_name)
+        self.assertEqual(keyword, 'vcs')
+
+    def test_classify_git_mail_drops_git_suffix_from_repo_name(self):
+        self.add_header('X-Git-Repo', self.package_name + '.git')
+        pkg, keyword = self.run_classify()
+        self.assertEqual(pkg, self.package_name)
+        self.assertEqual(keyword, 'vcs')
+
+    def test_classify_git_mail_keeps_basename_only(self):
+        self.add_header('X-Git-Repo', 'packages/unstable/' + self.package_name)
+        pkg, keyword = self.run_classify()
+        self.assertEqual(pkg, self.package_name)
+        self.assertEqual(keyword, 'vcs')
 
 
 class GetPseudoPackageListTest(TestCase):
@@ -611,37 +638,32 @@ class DebianContributorExtraTest(TestCase):
         d = DebianContributor.objects.create(email=email,
                                              agree_with_low_threshold_nmu=True)
 
-        # Only in NMU list
-        self.assertSequenceEqual(
-            [{
+        expected = [
+            {
+                'display': 'DMD',
+                'description': 'UDD\'s Debian Maintainer Dashboard',
+                'link': 'https://udd.debian.org/dmd/?dummy%40debian.org#todo',
+            },
+            {
                 'display': 'LowNMU',
                 'description': 'maintainer agrees with Low Threshold NMU',
                 'link': 'https://wiki.debian.org/LowThresholdNmu',
-            }],
-            get_maintainer_extra('dummy@debian.org')
-        )
+            }
+        ]
+        # Only in NMU list
+        self.assertSequenceEqual(expected,
+                                 get_maintainer_extra('dummy@debian.org'))
         # The developer is now in the DM list
         d.is_debian_maintainer = True
         d.allowed_packages = ['package-name']
         d.save()
         # When not providing a package name, the response is the same
-        self.assertSequenceEqual(
-            [{
-                'display': 'LowNMU',
-                'description': 'maintainer agrees with Low Threshold NMU',
-                'link': 'https://wiki.debian.org/LowThresholdNmu',
-            }],
-            get_maintainer_extra('dummy@debian.org')
-        )
+        self.assertSequenceEqual(expected,
+                                 get_maintainer_extra('dummy@debian.org'))
         # With a package name an extra item is in the response.
-        self.assertSequenceEqual([
-            {
-                'display': 'LowNMU',
-                'description': 'maintainer agrees with Low Threshold NMU',
-                'link': 'https://wiki.debian.org/LowThresholdNmu',
-            },
-            {'display': 'dm'}
-        ],
+        expected.append({'display': 'dm'})
+        self.assertSequenceEqual(
+            expected,
             get_maintainer_extra('dummy@debian.org', 'package-name')
         )
 
@@ -649,20 +671,28 @@ class DebianContributorExtraTest(TestCase):
         email = UserEmail.objects.create(email='dummy@debian.org')
         d = DebianContributor.objects.create(email=email,
                                              agree_with_low_threshold_nmu=True)
-
+        expected = [
+            {
+                'display': 'DMD',
+                'description': 'UDD\'s Debian Maintainer Dashboard',
+                'link': 'https://udd.debian.org/dmd/?dummy%40debian.org#todo',
+            },
+        ]
         # Only in NMU list - no extra data when the developer in displayed as
         # an uploader.
-        self.assertIsNone(get_uploader_extra('dummy@debian.org'))
+        self.assertSequenceEqual(expected,
+                                 get_uploader_extra('dummy@debian.org'))
         # The developer is now in the DM list
         d.is_debian_maintainer = True
         d.allowed_packages = ['package-name']
         d.save()
         # When not providing a package name, the response is the same
-        self.assertIsNone(get_uploader_extra('dummy@debian.org'))
+        self.assertSequenceEqual(expected,
+                                 get_uploader_extra('dummy@debian.org'))
         # With a package name an extra item is in the response.
-        self.assertSequenceEqual([
-            {'display': 'dm'}
-        ],
+        expected.append({'display': 'dm'})
+        self.assertSequenceEqual(
+            expected,
             get_uploader_extra('dummy@debian.org', 'package-name')
         )
 
@@ -2053,46 +2083,21 @@ class DebianWatchFileScannerUpdateTests(TestCase):
 
         self.task = DebianWatchFileScannerUpdate()
         # Stub the data providing methods: no content by default
-        self.task._get_udd_dehs_content = mock.MagicMock(return_value=b'')
-        self.task._get_watch_broken_content = mock.MagicMock(return_value=b'')
-        self.task._get_watch_available_content = mock.MagicMock(
+        self.task._get_upstream_status_content = mock.MagicMock(
             return_value=b'')
 
     def run_task(self):
         self.task.execute()
 
-    def set_udd_dehs_content(self, content):
+    def set_upstream_status_content(self, content):
         """
         Sets the stub content returned to the task as UDD DEHS data.
         :param content: A list of dicts of information returned by UDD. The
             content given as a response to the task will be the YAML encoded
             representation of this list.
         """
-        self.task._get_udd_dehs_content.return_value = yaml.safe_dump(
-            content,
-            default_flow_style=False).encode('utf-8')
-
-    def set_watch_broken_content(self, packages):
-        """
-        Sets the stub content returned to the task as the content of the
-        watch-broken.txt file.
-
-        :param packages: A list of packages which should be returned to
-            indicate a broken watch file.
-        """
-        self.task._get_watch_broken_content.return_value = \
-            '\n'.join(packages).encode('utf-8')
-
-    def set_watch_available_content(self, packages):
-        """
-        Sets the stub content returned to the task as the content of the
-        watch-avail.txt file.
-
-        :param packages: A list of packages which should be returned to
-            indicate an available watch file.
-        """
-        self.task._get_watch_available_content.return_value = \
-            '\n'.join(packages).encode('utf-8')
+        self.task._get_upstream_status_content.return_value = json.dumps(
+            content).encode('utf-8')
 
     def get_item_type(self, type_name):
         """
@@ -2117,7 +2122,7 @@ class DebianWatchFileScannerUpdateTests(TestCase):
                 'upstream-version': version,
             }
         ]
-        self.set_udd_dehs_content(dehs)
+        self.set_upstream_status_content(dehs)
         # Sanity check: no action items
         self.assertEqual(0, ActionItem.objects.count())
 
@@ -2155,7 +2160,7 @@ class DebianWatchFileScannerUpdateTests(TestCase):
             item_type=item_type,
             short_description='Desc')
         dehs = []
-        self.set_udd_dehs_content(dehs)
+        self.set_upstream_status_content(dehs)
 
         self.run_task()
 
@@ -2182,7 +2187,7 @@ class DebianWatchFileScannerUpdateTests(TestCase):
                 'upstream-version': version,
             }
         ]
-        self.set_udd_dehs_content(dehs)
+        self.set_upstream_status_content(dehs)
 
         self.run_task()
 
@@ -2213,7 +2218,7 @@ class DebianWatchFileScannerUpdateTests(TestCase):
                 'warnings': warning,
             }
         ]
-        self.set_udd_dehs_content(dehs)
+        self.set_upstream_status_content(dehs)
         # Sanity check: no action items
         self.assertEqual(0, ActionItem.objects.count())
 
@@ -2250,7 +2255,7 @@ class DebianWatchFileScannerUpdateTests(TestCase):
             item_type=item_type,
             short_description='Desc')
         dehs = []
-        self.set_udd_dehs_content(dehs)
+        self.set_upstream_status_content(dehs)
 
         self.run_task()
 
@@ -2282,7 +2287,7 @@ class DebianWatchFileScannerUpdateTests(TestCase):
                 'warnings': warning,
             }
         ]
-        self.set_udd_dehs_content(dehs)
+        self.set_upstream_status_content(dehs)
 
         self.run_task()
 
@@ -2303,141 +2308,6 @@ class DebianWatchFileScannerUpdateTests(TestCase):
         self.run_task()
 
         self.assertEqual(0, ActionItem.objects.count())
-
-    def test_watch_broken_item_created(self):
-        """
-        Tests that a ``watch-file-broken`` action item is created when the
-        package contains a watch failure as indicated by the watch-broken.txt
-        file.
-        """
-        self.set_watch_broken_content([self.package.name])
-        # Sanity check: no action items
-        self.assertEqual(0, ActionItem.objects.count())
-
-        self.run_task()
-
-        # Action item created.
-        self.assertEqual(1, ActionItem.objects.count())
-        # Action item correct type
-        item = ActionItem.objects.all()[0]
-        self.assertEqual(
-            'watch-file-broken',
-            item.item_type.type_name)
-        # Correct full description template
-        self.assertEqual(
-            DebianWatchFileScannerUpdate.ACTION_ITEM_TEMPLATES
-            ['watch-file-broken'], item.full_description_template)
-        # Correct extra data
-        self.assertIsNone(item.extra_data)
-        # Low severity item
-        self.assertEqual('low', item.get_severity_display())
-
-    def test_watch_broken_item_removed(self):
-        """
-        Tests that a ``watch-file-broken`` item is removed when a package no
-        longer has the issue.
-        """
-        # Make sure the package previously had an action item.
-        item_type = self.get_item_type('watch-file-broken')
-        ActionItem.objects.create(
-            package=self.package,
-            item_type=item_type,
-            short_description='Desc')
-
-        self.run_task()
-
-        # Action item removed
-        self.assertEqual(0, ActionItem.objects.count())
-
-    def test_watch_broken_item_updated(self):
-        """
-        Tests that a ``watch-file-broken`` action item is updated when there is
-        newer data available for the package.
-        """
-        item_type = self.get_item_type('watch-file-broken')
-        ActionItem.objects.create(
-            package=self.package,
-            item_type=item_type,
-            short_description='Desc',
-            extra_data={
-                'key': 'value',
-            })
-        self.set_watch_broken_content([self.package.name])
-
-        self.run_task()
-
-        # Still the one action item
-        self.assertEqual(1, ActionItem.objects.count())
-        # Extra data updated
-        item = ActionItem.objects.all()[0]
-        self.assertIsNone(item.extra_data)
-
-    def test_watch_available_item_created(self):
-        """
-        Tests that a ``watch-file-available`` action item is created when the
-        package is found in the watch-avail.txt file.
-        """
-        self.set_watch_available_content([self.package.name])
-        # Sanity check: no action items
-        self.assertEqual(0, ActionItem.objects.count())
-
-        self.run_task()
-
-        # Action item created.
-        self.assertEqual(1, ActionItem.objects.count())
-        # Action item correct type
-        item = ActionItem.objects.all()[0]
-        self.assertEqual(
-            'watch-file-available',
-            item.item_type.type_name)
-        # Correct full description template
-        self.assertEqual(
-            DebianWatchFileScannerUpdate.ACTION_ITEM_TEMPLATES
-            ['watch-file-available'], item.full_description_template)
-        # Correct extra data
-        self.assertIsNone(item.extra_data)
-        # Wishlist severity item
-        self.assertEqual('wishlist', item.get_severity_display())
-
-    def test_watch_available_item_removed(self):
-        """
-        Tests that a ``watch-file-available`` item is removed when a package no
-        longer has the issue.
-        """
-        # Make sure the package previously had an action item.
-        item_type = self.get_item_type('watch-file-available')
-        ActionItem.objects.create(
-            package=self.package,
-            item_type=item_type,
-            short_description='Desc')
-
-        self.run_task()
-
-        # Action item removed
-        self.assertEqual(0, ActionItem.objects.count())
-
-    def test_watch_available_item_updated(self):
-        """
-        Tests that a ``watch-file-available`` action item is updated when there
-        is newer data available for the package.
-        """
-        item_type = self.get_item_type('watch-file-available')
-        ActionItem.objects.create(
-            package=self.package,
-            item_type=item_type,
-            short_description='Desc',
-            extra_data={
-                'key': 'value',
-            })
-        self.set_watch_broken_content([self.package.name])
-
-        self.run_task()
-
-        # Still the one action item
-        self.assertEqual(1, ActionItem.objects.count())
-        # Extra data updated
-        item = ActionItem.objects.all()[0]
-        self.assertIsNone(item.extra_data)
 
 
 class UpdateSecurityIssuesTaskTests(TestCase):
@@ -2707,14 +2577,14 @@ class CodeSearchLinksTest(TestCase):
         return self.client.get(package_page_url)
 
     def browse_link_in_content(self, content):
-        html = soup(content)
+        html = soup(content, 'html.parser')
         for a_tag in html.findAll('a', {'href': True}):
             if a_tag['href'].startswith('https://sources.debian.net'):
                 return True
         return False
 
     def search_form_in_content(self, content):
-        html = soup(content)
+        html = soup(content, 'html.parser')
         return bool(html.find('form', {'class': 'code-search-form'}))
 
     def test_package_in_stable(self):
@@ -2772,7 +2642,7 @@ class CodeSearchLinksTest(TestCase):
 
     def test_code_search_view_missing_query_parameter(self):
         """Test codesearch view with missing query parameter"""
-        # missing query paramter
+        # missing query parameter
         response = self.client.get(reverse('dtracker-code-search'),
                                    {'package': self.package.name})
         self.assertEqual(response.status_code, 400)
@@ -3178,414 +3048,6 @@ class UpdatePiupartsTaskTests(TestCase):
         self.assertEqual(0, ActionItem.objects.count())
 
 
-class UpdateReleaseGoalsTaskTests(TestCase):
-
-    """
-    Tests for the
-    :class:`distro_tracker.vendor.debian.tracker_tasks.UpdateReleaseGoalsTask`
-    task.
-    """
-
-    def setUp(self):
-        self.package = SourcePackageName.objects.create(name='dummy-package')
-
-        self.task = UpdateReleaseGoalsTask()
-        # Stub the data providing method
-        self.release_goals_content = None
-        self.bug_list_content = None
-        self.task._get_release_goals_content = mock.MagicMock()
-
-    def get_action_item_type(self):
-        return ActionItemType.objects.get_or_create(
-            type_name=UpdateReleaseGoalsTask.ACTION_ITEM_TYPE_NAME)[0]
-
-    def set_release_goals_content(self, release_goals):
-        """
-        Sets the stub return value which the task will receive as the content
-        of the release goals.
-        :param release_goals: A list of dicts describing release goals.
-        """
-        self.release_goals_content = yaml.safe_dump({
-            'codename': 'wheezy',
-            'release-goals': release_goals
-        })
-
-    def set_bug_list_content(self, bug_list):
-        """
-        Sets the stub return value which the task will receive as the content
-        of the bug list resource.
-        """
-        self.bug_list_content = yaml.safe_dump(bug_list)
-
-    def run_task(self):
-        if self.release_goals_content is None and self.bug_list_content is None:
-            return_value = None
-        else:
-            return_value = (
-                self.release_goals_content,
-                self.bug_list_content)
-
-        self.task._get_release_goals_content.return_value = return_value
-        self.task.execute()
-
-    def test_action_item_created(self):
-        """
-        Tests that an :class:`ActionItem
-        <distro_tracker.core.models.ActionItem>` is created when the package has
-        a release goal bug for one release goal.
-        """
-        user = 'user@domain.com'
-        tag = 'goal'
-        bug_id = 5
-        release_goal_name = 'Goal'
-        release_goal_url = 'http://some.url.com'
-        self.set_release_goals_content([{
-            'name': release_goal_name,
-            'state': 'accepted',
-            'url': release_goal_url,
-            'bugs': {
-                'user': user,
-                'usertags': [tag],
-            }
-        }])
-        self.set_bug_list_content([{
-            'id': bug_id,
-            'source': self.package.name,
-            'email': user,
-            'tag': tag,
-        }])
-
-        self.run_task()
-
-        # An action item is creaed
-        self.assertEqual(1, ActionItem.objects.count())
-        # Correct item type?
-        item = ActionItem.objects.all()[0]
-        self.assertEqual(
-            UpdateReleaseGoalsTask.ACTION_ITEM_TYPE_NAME,
-            item.item_type.type_name)
-        # Correct full description template?
-        self.assertEqual(
-            UpdateReleaseGoalsTask.ACTION_ITEM_TEMPLATE,
-            item.full_description_template)
-        # Expected data found in extra_data?
-        expected_data = [{
-            'id': bug_id,
-            'name': release_goal_name,
-            'url': release_goal_url,
-        }]
-        self.assertEqual(expected_data, item.extra_data)
-
-    def test_action_item_created_multiple_bugs(self):
-        """
-        Tests that an :class:`ActionItem
-        <distro_tracker.core.models.ActionItem>` is created when the package has
-        multiple release goal bugs for one release goal.
-        """
-        user = 'user@domain.com'
-        tag = 'goal'
-        bug_ids = [5, 10]
-        release_goal_name = 'Goal'
-        release_goal_url = 'http://some.url.com'
-        self.set_release_goals_content([{
-            'name': release_goal_name,
-            'state': 'accepted',
-            'url': release_goal_url,
-            'bugs': {
-                'user': user,
-                'usertags': [tag],
-            }
-        }])
-        self.set_bug_list_content([
-            {
-                'id': bug_id,
-                'source': self.package.name,
-                'email': user,
-                'tag': tag,
-            }
-            for bug_id in bug_ids
-        ])
-
-        self.run_task()
-
-        # Only one action item.
-        self.assertEqual(1, ActionItem.objects.count())
-        # Expected data found in extra_data?
-        item = ActionItem.objects.all()[0]
-        extra_data_bug_ids = [bug['id'] for bug in item.extra_data]
-        for bug_id in bug_ids:
-            self.assertIn(bug_id, extra_data_bug_ids)
-
-    def test_action_item_created_multiple_release_goals(self):
-        """
-        Tests that an :class:`ActionItem
-        <distro_tracker.core.models.ActionItem>` is created when the package has
-        multiple release goal bugs for multiple release goals.
-        """
-        release_goals = [
-            {
-                'user': 'user1@domain.com',
-                'tag': 'goal-one',
-                'name': 'GoalOne',
-                'url': 'http://first.url.com',
-            },
-            {
-                'user': 'user2@domain.com',
-                'tag': 'goal-two',
-                'name': 'GoalTwo',
-                'url': 'http://second.url.com',
-            }
-        ]
-        self.set_release_goals_content([
-            {
-                'name': release_goal['name'],
-                'state': 'accepted',
-                'url': release_goal['url'],
-                'bugs': {
-                    'user': release_goal['user'],
-                    'usertags': [release_goal['tag']],
-                }
-            }
-            for release_goal in release_goals
-        ])
-        bug_ids = [5, 10]
-        self.set_bug_list_content([
-            {
-                'id': bug_id,
-                'source': self.package.name,
-                'email': release_goal['user'],
-                'tag': release_goal['tag'],
-            }
-            for bug_id, release_goal in zip(bug_ids, release_goals)
-        ])
-
-        self.run_task()
-
-        # Only one action item.
-        self.assertEqual(1, ActionItem.objects.count())
-        # All bug ids?
-        item = ActionItem.objects.all()[0]
-        extra_data_bug_ids = [bug['id'] for bug in item.extra_data]
-        for bug_id in bug_ids:
-            self.assertIn(bug_id, extra_data_bug_ids)
-        # All release goals?
-        extra_data_release_goals = [bug['name'] for bug in item.extra_data]
-        for release_goal in release_goals:
-            self.assertIn(release_goal['name'], extra_data_release_goals)
-
-    def test_action_item_updated(self):
-        """
-        Tests that an existing :class:`ActionItem
-        <distro_tracker.core.models.ActionItem>` is updated when there is new
-        release goal information for the package.
-        """
-        # Create an already existing action item...
-        old_bug_id = 1
-        old_item = ActionItem.objects.create(
-            item_type=self.get_action_item_type(),
-            package=self.package,
-            extra_data=[
-                {
-                    'id': old_bug_id,
-                    'name': 'Old release goal',
-                }
-            ])
-        old_timestamp = old_item.last_updated_timestamp
-        # Set the stub content to a different release goal
-        user = 'user@domain.com'
-        tag = 'goal'
-        bug_id = 5
-        release_goal_name = 'Goal'
-        release_goal_url = 'http://some.url.com'
-        self.set_release_goals_content([{
-            'name': release_goal_name,
-            'state': 'accepted',
-            'url': release_goal_url,
-            'bugs': {
-                'user': user,
-                'usertags': [tag],
-            }
-        }])
-        self.set_bug_list_content([{
-            'id': bug_id,
-            'source': self.package.name,
-            'email': user,
-            'tag': tag,
-        }])
-
-        self.run_task()
-
-        # Still only one action item
-        self.assertEqual(1, ActionItem.objects.count())
-        item = ActionItem.objects.all()[0]
-        # This action item has been updated
-        self.assertNotEqual(old_timestamp, item.last_updated_timestamp)
-        expected_data = [
-            {
-                'id': bug_id,
-                'name': release_goal_name,
-                'url': release_goal_url,
-            }
-        ]
-        self.assertEqual(expected_data, item.extra_data)
-
-    def test_action_item_updated_new_bug(self):
-        """
-        Tests that an existing :class:`ActionItem
-        <distro_tracker.core.models.ActionItem>` is updated when there is new
-        release goal information for the package: a new bug is added.
-        """
-        # Create an already existing action item...
-        release_goal_name = 'Goal'
-        release_goal_url = 'http://some.url.com'
-        old_bug_data = {
-            'id': 1,
-            'name': release_goal_name,
-            'url': release_goal_url,
-        }
-        old_item = ActionItem.objects.create(
-            item_type=self.get_action_item_type(),
-            package=self.package,
-            extra_data=[old_bug_data])
-        old_timestamp = old_item.last_updated_timestamp
-        # Set the stub content to have an additional bug
-        user = 'user@domain.com'
-        tag = 'goal'
-        bug_ids = [old_bug_data['id'], 10]
-        self.set_release_goals_content([{
-            'name': release_goal_name,
-            'state': 'accepted',
-            'url': release_goal_url,
-            'bugs': {
-                'user': user,
-                'usertags': [tag],
-            }
-        }])
-        self.set_bug_list_content([
-            {
-                'id': bug_id,
-                'source': self.package.name,
-                'email': user,
-                'tag': tag,
-            }
-            for bug_id in bug_ids
-        ])
-
-        self.run_task()
-
-        # Still only one action item
-        self.assertEqual(1, ActionItem.objects.count())
-        item = ActionItem.objects.all()[0]
-        # This action item has been updated
-        self.assertNotEqual(old_timestamp, item.last_updated_timestamp)
-        # Both the old and the new bug is found in the extra data
-        extra_data_bug_ids = [bug['id'] for bug in item.extra_data]
-        for bug_id in bug_ids:
-            self.assertIn(bug_id, extra_data_bug_ids)
-
-    def test_action_item_not_updated(self):
-        """
-        Tests that an existing :class:`ActionItem
-        <distro_tracker.core.models.ActionItem>` is not updated when the release
-        goal information has not changed between updates.
-        """
-        user = 'user@domain.com'
-        tag = 'goal'
-        bug_id = 5
-        release_goal_name = 'Goal'
-        release_goal_url = 'http://some.url.com'
-        self.set_release_goals_content([{
-            'name': release_goal_name,
-            'state': 'accepted',
-            'url': release_goal_url,
-            'bugs': {
-                'user': user,
-                'usertags': [tag],
-            }
-        }])
-        self.set_bug_list_content([{
-            'id': bug_id,
-            'source': self.package.name,
-            'email': user,
-            'tag': tag,
-        }])
-        # Create an action item with the same stats
-        expected_data = [{
-            'name': release_goal_name,
-            'id': bug_id,
-            'url': release_goal_url,
-        }]
-        old_item = ActionItem.objects.create(
-            item_type=self.get_action_item_type(),
-            package=self.package,
-            extra_data=expected_data)
-        old_timestamp = old_item.last_updated_timestamp
-
-        self.run_task()
-
-        # Still only one action item
-        self.assertEqual(1, ActionItem.objects.count())
-        item = ActionItem.objects.all()[0]
-        # This action item has not been changed
-        self.assertEqual(old_timestamp, item.last_updated_timestamp)
-        # No change to the extra data either?
-        self.assertEqual(expected_data, item.extra_data)
-
-    def test_action_item_removed(self):
-        """
-        Tests that an existing :class:`ActionItem
-        <distro_tracker.core.models.ActionItem>` is removed when there is no
-        longer any release goal information after an update.
-        """
-        # Create an already existing action item...
-        old_bug_id = 1
-        ActionItem.objects.create(
-            item_type=self.get_action_item_type(),
-            package=self.package,
-            extra_data=[
-                {
-                    'id': old_bug_id,
-                    'name': 'Old release goal',
-                }
-            ])
-        # Set the stub content to a different release goal
-        self.set_release_goals_content([])
-        self.set_bug_list_content([])
-
-        self.run_task()
-
-        # No more action items...
-        self.assertEqual(0, ActionItem.objects.count())
-
-    def test_action_item_no_changes_in_cache(self):
-        """
-        Tests that an existing :class:`ActionItem
-        <distro_tracker.core.models.ActionItem>` is not removed when there were
-        no changes in the cached content.
-        """
-        # Create an already existing action item...
-        old_bug_id = 1
-        old_item = ActionItem.objects.create(
-            item_type=self.get_action_item_type(),
-            package=self.package,
-            extra_data=[
-                {
-                    'id': old_bug_id,
-                    'name': 'Old release goal',
-                }
-            ])
-        old_timestamp = old_item.last_updated_timestamp
-
-        self.run_task()
-
-        # Still one action item
-        self.assertEqual(1, ActionItem.objects.count())
-        item = ActionItem.objects.all()[0]
-        # The item was not changed?
-        self.assertEqual(item.pk, old_item.pk)
-        self.assertEqual(old_timestamp, item.last_updated_timestamp)
-
-
 class UpdateUbuntuStatsTaskTests(TestCase):
 
     """
@@ -3937,7 +3399,7 @@ class UbuntuPanelTests(TestCase):
         return self.client.get(package_page_url)
 
     def ubuntu_panel_in_content(self, content):
-        html = soup(content)
+        html = soup(content, 'html.parser')
         for panel in html.findAll('div', {'class': 'panel-heading'}):
             if 'ubuntu' in str(panel):
                 return True
@@ -5205,7 +4667,7 @@ class UpdateDebciStatusTaskTest(TestCase):
         action_item = self.other_package.action_items.all()[0]
         url = "https://ci.debian.net/packages/o/other-package/"
         log = "https://ci.debian.net/data/packages/unstable/amd64/o/" + \
-            "other-package/latest-autopkgtest/log"
+            "other-package/latest-autopkgtest/log.gz"
         self.assertIn(url, action_item.short_description)
         self.assertIn(log, action_item.short_description)
         self.assertEqual(action_item.extra_data['duration'], "0h 8m 8s")
@@ -5281,7 +4743,7 @@ class UpdateDebciStatusTaskTest(TestCase):
         action_item = libpackage.action_items.all()[0]
         action_item_log_url = action_item.extra_data['log']
         log_url = "https://ci.debian.net/data/packages/unstable/amd64/libp/" + \
-            "libpackage/latest-autopkgtest/log"
+            "libpackage/latest-autopkgtest/log.gz"
 
         self.assertEqual(action_item_log_url, log_url)
 
@@ -5371,7 +4833,7 @@ class UpdatePackageScreenshotsTaskTest(TestCase):
             "packages": [{
                 "maintainer": "Jane Doe",
                 "name": "dummy",
-                "url": "http://screenshots.debian.net/package/dummy",
+                "url": "https://screenshots.debian.net/package/dummy",
                 "section": "universe/games",
                 "maintainer_email": "jane@example.com",
                 "homepage": "http://example.com/packages/dummy",
@@ -5392,7 +4854,7 @@ class UpdatePackageScreenshotsTaskTest(TestCase):
             "packages": [{
                 "maintainer": "John Doe",
                 "name": "other",
-                "url": "http://screenshots.debian.net/package/other",
+                "url": "https://screenshots.debian.net/package/other",
                 "section": "universe/games",
                 "maintainer_email": "john@example.com",
                 "homepage": "http://example.com/packages/other",
@@ -5428,7 +4890,7 @@ class UpdatePackageScreenshotsTaskTest(TestCase):
             "packages": [{
                 "maintainer": "John Doe",
                 "name": "other",
-                "url": "http://screenshots.debian.net/package/other",
+                "url": "https://screenshots.debian.net/package/other",
                 "section": "universe/games",
                 "maintainer_email": "john@example.com",
                 "homepage": "http://example.com/packages/other",

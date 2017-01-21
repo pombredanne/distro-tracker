@@ -16,6 +16,10 @@ INSTALLED_APPS += (
 
 # Official service name
 DISTRO_TRACKER_FQDN = "tracker.debian.org"
+ALLOWED_HOSTS = [
+    DISTRO_TRACKER_FQDN,
+    "2qlvvvnhqyda2ahd.onion",
+]
 
 # Custom data path (used only if it exists, so that we can reuse
 # those settings in a development environment too).
@@ -42,9 +46,6 @@ DISTRO_TRACKER_DEVEL_REPOSITORIES = ['unstable', 'experimental']
 
 #: URL for CVE tracker
 DISTRO_TRACKER_CVE_URL = 'https://security-tracker.debian.org/tracker/'
-
-# For backwards compatibility with the old PTS
-DISTRO_TRACKER_ACCEPT_UNQUALIFIED_EMAILS = True
 
 # Various settings for sso.debian.org support
 _index_auth = MIDDLEWARE_CLASSES.index(

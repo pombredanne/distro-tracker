@@ -2,11 +2,11 @@
 
 # Copyright 2015 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 """
@@ -508,7 +508,7 @@ class MailQueueTest(TestCase, QueueHelperMixin):
         path = self.create_mail('a')
         # We wait the end of the task for max 1 second
         process.join(1)
-        # Process finished succesfully (and we're not here due to timeout)
+        # Process finished successfully (and we're not here due to timeout)
         if process.is_alive():
             process.terminate()
             self.fail("process_loop did not terminate")
@@ -717,6 +717,18 @@ class MailQueueEntryTest(TestCase, QueueHelperMixin):
             count += 1
             if count > 50:
                 self.fail("schedule_next_try doesn't want to fail")
+
+    def test_schedule_next_try_sets_log_failure_on_first_try(self):
+        '''Should not log failure on first try'''
+        self.entry.set_data('log_failure', True)
+        self.entry.schedule_next_try()
+        self.assertFalse(self.entry.get_data('log_failure'))
+
+    def test_schedule_next_try_does_log_failure_on_last_try_only(self):
+        '''Should log failure on last try'''
+        while not self.entry.get_data('log_failure'):
+            self.assertTrue(self.entry.schedule_next_try())
+        self.assertFalse(self.entry.schedule_next_try())
 
     def test_schedule_next_try_sets_next_try_time(self):
         '''The scheduling is done via next_try_time data entry'''

@@ -2,20 +2,21 @@
 
 # Copyright 2013 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 
 from __future__ import unicode_literals
 
 from django.core.urlresolvers import reverse
-from django.utils.safestring import mark_safe
+from django.utils.encoding import force_text
 from django.utils.functional import cached_property
 from django.utils.http import urlencode, urlquote
+from django.utils.safestring import mark_safe
 
 from distro_tracker.core.utils import get_or_none
 from distro_tracker.core.models import Repository
@@ -88,7 +89,8 @@ class BuildLogCheckLinks(LinksPanel.ItemProvider):
         except PackageExtractedInfo.DoesNotExist:
             has_reproducibility = False
             reproducibility_status = None
-        reproducibility_url = "https://reproducible.debian.net/rb-pkg/{}.html"
+        reproducibility_url = \
+            "https://tests.reproducible-builds.org/debian/rb-pkg/{}.html"
         reproducibility_url = reproducibility_url.format(self.package.name)
 
         return [
@@ -170,7 +172,7 @@ class DebtagsLink(LinksPanel.ItemProvider):
     Add a link to debtags editor.
     """
     SOURCES_URL_TEMPLATE = \
-        'http://debtags.debian.net/rep/todo/maint/{maint}#{package}'
+        'https://debtags.debian.org/rep/todo/maint/{maint}#{package}'
 
     def get_panel_items(self):
         if not isinstance(self.package, SourcePackageName):
@@ -213,7 +215,7 @@ class ScreenshotsLink(LinksPanel.ItemProvider):
     Add a link to screenshots.debian.net
     """
     SOURCES_URL_TEMPLATE = \
-        'http://screenshots.debian.net/package/{package}'
+        'https://screenshots.debian.net/package/{package}'
 
     def get_panel_items(self):
         if not isinstance(self.package, SourcePackageName):
@@ -300,4 +302,5 @@ class BackToOldPTS(BasePanel):
     @property
     def has_content(self):
         return "packages.qa.debian.org" in \
-            self.request.META.get('HTTP_REFERER', '')
+            force_text(self.request.META.get('HTTP_REFERER', ''),
+                       encoding='latin1', errors='replace')

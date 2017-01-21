@@ -1,15 +1,18 @@
-# Copyright 2013-2014 The Distro Tracker Developers
+# Copyright 2013-2016 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 """Additional distro-tracker specific template tags."""
 from __future__ import unicode_literals
+
 from django import template
+from django.template.loader import render_to_string
+from django.utils.safestring import mark_safe
 
 register = template.Library()
 
@@ -49,6 +52,31 @@ def repeat(parser, token):
     return RepeatNode(nodelist, count)
 
 
+@register.simple_tag()
+def octicon(name, title='', content=None, role="img"):
+    """
+    Renders an octicon with alternate text.
+    """
+    if content is None:
+        content = mark_safe('<span class="sr-only">[{}]</span>'.format(title))
+
+    return mark_safe(render_to_string(
+        'core/octicon.html',
+        {'name': name, 'title': title, 'content': content, 'role': role}
+    ).rstrip())
+
+
+@register.simple_tag()
+def toggle_chevron(title='Toggle details'):
+    """
+    Renders a chevron to toggle details.
+    """
+    chevron = \
+        '<a href="#" role="button" aria-label="{}" tabindex="0">{}</a>'.format(
+            title, octicon('chevron-down', title=title, content=''))
+    return mark_safe(chevron)
+
+
 @register.filter(name='zip')
 def zip_iterables(first, second):
     """
@@ -65,7 +93,7 @@ def lookup(dictionary, key):
     """
     A filter to retrieve values from dictionaries.
 
-    The lookup filter can access dictionnary entries by their key, where the
+    The lookup filter can access dictionary entries by their key, where the
     key can be a variable and not only a literal value. It can be used
     like this "dictionary|lookup:key" where both "dictionary" and "key"
     are variables.

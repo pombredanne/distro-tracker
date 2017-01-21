@@ -1,16 +1,17 @@
 # Copyright 2013 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 """Views for the :mod:`distro_tracker.core` app."""
 from __future__ import unicode_literals
 import importlib
 from django.conf import settings
+from django.db.models import Q
 from django.shortcuts import render, redirect
 from django.shortcuts import get_object_or_404
 from django.http import Http404
@@ -138,19 +139,18 @@ class PackageAutocompleteView(View):
         MANAGERS = {
             'pseudo': PseudoPackageName.objects,
             'source': SourcePackageName.objects,
-            'binary': BinaryPackageName.objects,
+            'binary': BinaryPackageName.objects.exclude(source=True),
         }
         # When no package type is given include both pseudo and source packages
         filtered = MANAGERS.get(
             package_type,
-            PackageName.objects.exclude(
-                source=False, binary=False, pseudo=False)
+            PackageName.objects.filter(Q(source=True) | Q(pseudo=True))
         )
-        filtered = filtered.filter(name__istartswith=query_string)
+        filtered = filtered.filter(name__icontains=query_string)
         # Extract only the name of the package.
         filtered = filtered.values('name')
         # Limit the number of packages returned from the autocomplete
-        AUTOCOMPLETE_ITEMS_LIMIT = 10
+        AUTOCOMPLETE_ITEMS_LIMIT = 100
         filtered = filtered[:AUTOCOMPLETE_ITEMS_LIMIT]
         return render_to_json_response([query_string,
                                         [package['name']
@@ -317,7 +317,7 @@ class AddPackageToTeamView(LoginRequiredMixin, View):
         """
         team = get_object_or_404(Team, slug=slug)
         if not team.user_is_member(request.user):
-            # Only team mebers are allowed to modify the packages followed by
+            # Only team members are allowed to modify the packages followed by
             # the team.
             raise PermissionDenied
 
@@ -336,7 +336,7 @@ class RemovePackageFromTeamView(LoginRequiredMixin, View):
     def get_team(self, slug):
         team = get_object_or_404(Team, slug=slug)
         if not team.user_is_member(self.request.user):
-            # Only team mebers are allowed to modify the packages followed by
+            # Only team members are allowed to modify the packages followed by
             # the team.
             raise PermissionDenied
 
@@ -378,11 +378,12 @@ class RemovePackageFromTeamView(LoginRequiredMixin, View):
         return redirect(team)
 
 
-class JoinTeamView(LoginRequiredMixin,  View):
+class JoinTeamView(LoginRequiredMixin, View):
     """
     Lets logged in users join a public team.
-    After a user has been added to the team, he is redirected back to the team
-    page.
+
+    After a user has been added to the team, redirect them back to the
+    team page.
     """
     template_name = 'core/team-join-choose-email.html'
 

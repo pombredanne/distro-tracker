@@ -1,15 +1,16 @@
 {% extends 'core/panels/panel.html' %}
+{% load distro_tracker_extras %}
 
 {% block panel-header %}
-<div class="row-fluid">
-<div class="pull-left">
-    <span>{{ panel.title }} <a href="{% url 'dtracker-package-news' package.name %}"><i class='icon-share'></i></a></span>
-</div>
-<div class="pull-right">
-    <a title="rss feed" href="{% url 'dtracker-package-rss-news-feed' package.name %}">
-        <i class="icon-bullhorn"></i>
-    </a>
-</div>
+<div class="row">
+    <div class="col-xs-12">
+	<a href="{% url 'dtracker-package-news' package.name %}">{{ panel.title }}</a>
+	<div class="pull-xs-right">
+	    <a href="{% url 'dtracker-package-rss-news-feed' package.name %}">
+	    {% octicon 'rss' 'rss feed' %}
+	    </a>
+	</div>
+    </div>
 </div>
 {% endblock %}
 
@@ -18,6 +19,15 @@
     {% include "core/news_list.html" %}
 {% endwith %}
 {% if panel.context.has_more %}
-<div class="pagination">Page <a href="{% url 'dtracker-package-news' package.name %}?page=2">2</a></div>
+<div class="text-xs-center" style="margin-bottom: -1rem">
+    <ul class="pagination m-b-0">
+	<li class="page-item">
+	    <a class="page-link" href="{% url 'dtracker-package-news' package.name %}">1</a>
+	</li>
+	<li class="page-item">
+	    <a class="page-link" href="{% url 'dtracker-package-news' package.name %}?page=2">2</a>
+	</li>
+    </ul>
+</div>
 {% endif %}
 {% endblock %}

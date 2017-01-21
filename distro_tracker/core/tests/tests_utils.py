@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 
-# Copyright 2013 The Distro Tracker Developers
+# Copyright 2013-2016 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 
@@ -14,15 +14,23 @@
 Tests for the Distro Tracker core utils.
 """
 from __future__ import unicode_literals
-from distro_tracker.test import TestCase, SimpleTestCase
-from django.test.utils import override_settings
+import datetime
+from email import encoders
+from email.header import Header
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+import os
+import time
+import tempfile
+
+from debian import deb822
 from django.core import mail
+from django.test.utils import override_settings
 from django.utils import six
 from django.utils.http import http_date
 from django.utils.functional import curry
 from django.utils.six.moves import mock
-from distro_tracker.test.utils import set_mock_response
-from distro_tracker.test.utils import make_temp_directory
+
 from distro_tracker.core.models import Repository
 from distro_tracker.core.utils import verp
 from distro_tracker.core.utils import message_from_bytes
@@ -37,6 +45,10 @@ from distro_tracker.core.utils.packages import package_hashdir
 from distro_tracker.core.utils.datastructures import DAG, InvalidDAGException
 from distro_tracker.core.utils.email_messages import CustomEmailMessage
 from distro_tracker.core.utils.email_messages import decode_header
+from distro_tracker.core.utils.email_messages import (
+    name_and_address_from_string,
+    names_and_addresses_from_string)
+from distro_tracker.core.utils.email_messages import unfold_header
 from distro_tracker.core.utils.linkify import linkify
 from distro_tracker.core.utils.linkify import LinkifyDebianBugLinks
 from distro_tracker.core.utils.linkify import LinkifyUbuntuBugLinks
@@ -44,18 +56,9 @@ from distro_tracker.core.utils.linkify import LinkifyHttpLinks
 from distro_tracker.core.utils.linkify import LinkifyCVELinks
 from distro_tracker.core.utils.http import HttpCache
 from distro_tracker.core.utils.http import get_resource_content
-
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email.header import Header
-from email import encoders
-
-
-from debian import deb822
-import os
-import time
-import tempfile
-import datetime
+from distro_tracker.test import TestCase, SimpleTestCase
+from distro_tracker.test.utils import set_mock_response
+from distro_tracker.test.utils import make_temp_directory
 
 
 class VerpModuleTest(SimpleTestCase):
@@ -102,6 +105,13 @@ class VerpModuleTest(SimpleTestCase):
             verp.decode(
                 'bounce-user+2B+21+25+2D+3A+40+5B+5D+2B=other.com@dom.com'),
             ('bounce@dom.com', 'user+!%-:@[]+@other.com'))
+
+    def test_decode_lowercase_code(self):
+        """Encoding of special characters with lowercase should work"""
+        self.assertEqual(
+            verp.decode(
+                'bounce-user+2b+2d+3a=other.com@dom.com'),
+            ('bounce@dom.com', 'user+-:@other.com'))
 
     def test_invariant_encode_decode(self):
         """
@@ -188,11 +198,6 @@ Content-Transfer-Encoding: 8bit
             message.as_string())
 
 
-from distro_tracker.core.utils.email_messages import (
-    name_and_address_from_string,
-    names_and_addresses_from_string)
-
-
 class EmailUtilsTest(SimpleTestCase):
     def test_name_and_address_from_string(self):
         """
@@ -243,6 +248,20 @@ class EmailUtilsTest(SimpleTestCase):
         )
 
         self.assertSequenceEqual(names_and_addresses_from_string(''), [])
+
+    def test_unfold_header(self):
+        test_values = {
+            'a\n b': 'a b',
+            'a\r\n b': 'a b',
+            'a\n\tb': 'a\tb',
+            'a\r\n\tb\n c\n\td': 'a\tb c\td',
+            'a\n\t bc\n  d': 'a\t bc  d',
+        }
+        for folded, unfolded in test_values.items():
+            self.assertEqual(unfold_header(folded), unfolded)
+
+    def test_unfold_header_with_none_value(self):
+        self.assertIsNone(unfold_header(None))
 
 
 class CustomEmailMessageTest(TestCase):
@@ -1165,6 +1184,9 @@ class DecodeHeaderTest(SimpleTestCase):
         header_text = decode_header(h)
         self.assertEqual('München München', header_text)
 
+    def test_decode_header_none(self):
+        self.assertIsNone(decode_header(None))
+
 
 class AptCacheTests(TestCase):
     """
@@ -1371,21 +1393,21 @@ class LinkifyTests(TestCase):
     sample_url = "http://www.example.com/foo/"
     https_url = "https://www.example.com.foo/"
 
-    @classmethod
-    def link(self, url):
+    @staticmethod
+    def link(url):
         return '<a href="{url}">{url}</a>'.format(url=url)
 
-    @classmethod
-    def debian_bug(self, bug, baseurl='https://bugs.debian.org/'):
+    @staticmethod
+    def debian_bug(bug, baseurl='https://bugs.debian.org/'):
         bugno = bug[1:] if bug[0] == '#' else bug
         return '<a href="{}{}">{}</a>'.format(baseurl, bugno, bug)
 
     @classmethod
-    def lp_bug(self, bug):
-        return self.debian_bug(bug, 'https://bugs.launchpad.net/bugs/')
+    def lp_bug(cls, bug):
+        return cls.debian_bug(bug, 'https://bugs.launchpad.net/bugs/')
 
-    @classmethod
-    def cve_link(self, cve,
+    @staticmethod
+    def cve_link(cve,
                  baseurl='https://cve.mitre.org/cgi-bin/cvename.cgi?name='):
         return '<a href="{}{}">{}</a>'.format(baseurl, cve, cve)
 
@@ -1457,6 +1479,8 @@ class LinkifyTests(TestCase):
                 'intext': ('see ' + 'cve-2014-67890' + ' for informations',
                            'see ' + self.cve_link('cve-2014-67890') +
                            ' for informations'),
+                'notinurl': ('foo.debian.org/CVE-2014-1234',
+                             'foo.debian.org/CVE-2014-1234'),
             },
         }
 

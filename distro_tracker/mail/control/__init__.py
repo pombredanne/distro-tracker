@@ -1,10 +1,10 @@
 # Copyright 2013 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 """
@@ -18,6 +18,8 @@ from django.template.loader import render_to_string
 from distro_tracker.core.utils import distro_tracker_render_to_string
 from distro_tracker.core.utils import extract_email_address_from_header
 from distro_tracker.core.utils import get_decoded_message_payload
+from distro_tracker.core.utils.email_messages import decode_header
+from distro_tracker.core.utils.email_messages import unfold_header
 
 from distro_tracker.mail.control.commands import CommandFactory
 from distro_tracker.mail.control.commands import CommandProcessor
@@ -47,20 +49,24 @@ def send_response(original_message, message_text, recipient_email, cc=None):
         response.
     :param cc: A list of emails which should receive a CC of the response.
     """
-    subject = original_message.get('Subject')
+    subject = unfold_header(decode_header(original_message.get('Subject', '')))
     if not subject:
         subject = 'Your mail'
+    message_id = unfold_header(original_message.get('Message-ID', ''))
+    references = unfold_header(original_message.get('References', ''))
+    if references:
+        references += ' '
+    references += message_id
     message = EmailMessage(
         subject='Re: ' + subject,
-        to=[original_message['From']],
+        to=[unfold_header(original_message['From'])],
         cc=cc,
         from_email=DISTRO_TRACKER_BOUNCES_EMAIL,
         headers={
             'From': DISTRO_TRACKER_CONTACT_EMAIL,
             'X-Loop': DISTRO_TRACKER_CONTROL_EMAIL,
-            'References': ' '.join((original_message.get('References', ''),
-                                    original_message.get('Message-ID', ''))),
-            'In-Reply-To': original_message.get('Message-ID', ''),
+            'References': references,
+            'In-Reply-To': message_id,
         },
         body=message_text,
     )
@@ -74,15 +80,15 @@ def send_response(original_message, message_text, recipient_email, cc=None):
 
 def send_plain_text_warning(original_message, logdata):
     """
-    Sends an email warning the user that his control message could not be
-    decoded due to not being a text/plain message.
+    Sends an email warning the user that the control message could not
+    be decoded due to not being a text/plain message.
 
     :param original_message: The received control message.
     :type original_message: :py:class:`email.message.Message` or an object with
         an equivalent interface
     """
-    WARNING_MESSAGE = render_to_string('control/email-plaintext-warning.txt')
-    send_response(original_message, WARNING_MESSAGE,
+    warning_message = render_to_string('control/email-plaintext-warning.txt')
+    send_response(original_message, warning_message,
                   recipient_email=logdata['from'])
     logger.info("control :: no plain text found in %(msgid)s", logdata)
 
@@ -210,10 +216,8 @@ def extract_command_from_subject(message):
     :type message: :py:class:`email.message.Message` or an object with
         an equivalent interface
     """
-    subject = message['Subject']
+    subject = decode_header(message.get('Subject'))
     if not subject:
         return []
-    match = re.match(r'(?:Re\s*:\s*)?(.*)$',
-                     message.get('Subject', ''),
-                     re.IGNORECASE)
-    return ['# Message subject', match.group(1)]
+    match = re.match(r'(?:Re\s*:\s*)?(.*)$', subject, re.IGNORECASE)
+    return ['# Message subject', match.group(1) if match else subject]

@@ -1,10 +1,10 @@
 # Copyright 2013-2014 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 """
@@ -64,7 +64,7 @@ class BaseTask(six.with_metaclass(PluginRegistry)):
         this classmethod.
 
         If none of those is done, the default value is the name of the class,
-        i.e. the ``__name__`` atribute of the class.
+        i.e. the ``__name__`` attribute of the class.
         """
         if hasattr(cls, 'NAME'):
             return cls.NAME
@@ -81,9 +81,12 @@ class BaseTask(six.with_metaclass(PluginRegistry)):
 
     def is_initial_task(self):
         """
-        :returns True: If the task is the first task in a job.
+        :returns True: If the task is the first task in a job (or if it's not
+            part of a job).
         :returns False: If the task is not the first task in a job.
         """
+        if self.job is None:
+            return True
         return len(self.job.job_state.processed_tasks) == 0
 
     def execute(self):

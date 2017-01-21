@@ -2,11 +2,11 @@
 
 # Copyright 2013 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 
@@ -57,7 +57,7 @@ class VersionedLinksPanelTests(TestCase):
         Checks whether the versioned links panel is found in the rendered HTML
         response.
         """
-        html = soup(response.content)
+        html = soup(response.content, 'html.parser')
         panels = html.findAll("div", {'class': 'panel-heading'})
         for panel in panels:
             if 'versioned links' in str(panel):
@@ -138,7 +138,7 @@ class GeneralInfoLinkPanelItemsTests(TestCase, TemplateTestsMixin):
         Checks whether the links panel is found in the rendered HTML
         response.
         """
-        html = soup(response.content)
+        html = soup(response.content, 'html.parser')
         panels = html.findAll("div", {'class': 'panel-heading'})
         for panel in panels:
             if 'links' in str(panel) and 'versioned links' not in str(panel):

@@ -1,10 +1,10 @@
 # Copyright 2013 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 """Various utilities for the distro-tracker project."""
@@ -129,8 +129,7 @@ class PrettyPrintList(object):
         return self._list == other
 
 
-class SpaceDelimitedTextField(six.with_metaclass(models.SubfieldBase,
-                                                 models.TextField)):
+class SpaceDelimitedTextField(models.TextField):
     """
     A custom Django model field which stores a list of strings.
 
@@ -140,6 +139,9 @@ class SpaceDelimitedTextField(six.with_metaclass(models.SubfieldBase,
     """
 
     description = "Stores a space delimited list of strings"
+
+    def from_db_value(self, value, expression, connection, context):
+        return self.to_python(value)
 
     def to_python(self, value):
         if value is None:

@@ -1,10 +1,10 @@
-# Copyright 2013 The Distro Tracker Developers
+# Copyright 2013-2015 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 """
@@ -20,6 +20,7 @@ from distro_tracker.core.models import SourcePackageName, PseudoPackageName
 from distro_tracker.mail.control.commands.confirmation import needs_confirmation
 from distro_tracker.mail.control.commands.base import Command
 
+from django.core.exceptions import ValidationError
 from django.conf import settings
 DISTRO_TRACKER_FQDN = settings.DISTRO_TRACKER_FQDN
 
@@ -27,8 +28,8 @@ DISTRO_TRACKER_FQDN = settings.DISTRO_TRACKER_FQDN
 @needs_confirmation
 class SubscribeCommand(Command):
     """
-    A command which subscribes a user to a package so that he receives that
-    package's email messages.
+    A command which subscribes a user to a package so that they
+    receive that package's email messages.
 
     .. note::
       This command requires confirmation.
@@ -62,9 +63,9 @@ class SubscribeCommand(Command):
         Implementation of a hook method which is executed instead of
         :py:meth:`handle` when the command is not confirmed.
         """
-        user = get_or_none(UserEmail, email=self.user_email)
-        emailsettings = get_or_none(EmailSettings, user_email=user)
-        if user and emailsettings.is_subscribed_to(self.package):
+        settings = get_or_none(EmailSettings,
+                               user_email__email__iexact=self.user_email)
+        if settings and settings.is_subscribed_to(self.package):
             self.warn('{email} is already subscribed to {package}'.format(
                 email=self.user_email,
                 package=self.package))
@@ -92,10 +93,14 @@ class SubscribeCommand(Command):
                     self.warn('Package {package} is not even a pseudo '
                               'package.'.format(package=self.package))
 
-        Subscription.objects.create_for(
-            email=self.user_email,
-            package_name=self.package,
-            active=False)
+        try:
+            Subscription.objects.create_for(
+                email=self.user_email,
+                package_name=self.package,
+                active=False)
+        except ValidationError as e:
+            self.warn(e.message)
+            return False
 
         self.reply('A confirmation mail has been sent to ' + self.user_email)
         return True
@@ -128,8 +133,8 @@ class SubscribeCommand(Command):
 @needs_confirmation
 class UnsubscribeCommand(Command):
     """
-    Command which unsubscribes the user from a package so that he no longer
-    receives any email messages regarding this package.
+    Command which unsubscribes the user from a package so that they no
+    longer receive any email messages regarding this package.
 
     .. note::
        This command requires confirmation.
@@ -160,9 +165,7 @@ class UnsubscribeCommand(Command):
         Implementation of a hook method which is executed instead of
         :py:meth:`handle` when the command is not confirmed.
         """
-        nonbinary_pkgname = \
-            PackageName.objects.exclude(binary=True).filter(name=self.package)
-        if not nonbinary_pkgname.exists():
+        if not SourcePackageName.objects.exists_with_name(self.package):
             if BinaryPackageName.objects.exists_with_name(self.package):
                 binary_package = \
                     BinaryPackageName.objects.get_by_name(self.package)
@@ -177,10 +180,9 @@ class UnsubscribeCommand(Command):
                 self.warn(
                     '{package} is neither a source package '
                     'nor a binary package.'.format(package=self.package))
-                return False
-        user = get_or_none(UserEmail, email=self.user_email)
-        emailsettings = get_or_none(EmailSettings, user_email=user)
-        if not user or not emailsettings.is_subscribed_to(self.package):
+        settings = get_or_none(EmailSettings,
+                               user_email__email__iexact=self.user_email)
+        if not settings or not settings.is_subscribed_to(self.package):
             self.error(
                 "{email} is not subscribed, you can't unsubscribe.".format(
                     email=self.user_email)
@@ -337,8 +339,8 @@ class QuitCommand(Command):
 @needs_confirmation
 class UnsubscribeallCommand(Command):
     """
-    Command which unsubscribes the user from all packages so that he no longer
-    receives any email messages regarding any packages.
+    Command which unsubscribes the user from all packages so that they
+    no longer receive any email messages regarding any packages.
 
     .. note::
        This command requires confirmation.
@@ -368,10 +370,9 @@ class UnsubscribeallCommand(Command):
         Implementation of a hook method which is executed instead of
         :py:meth:`handle` when the command is not confirmed.
         """
-        user = get_or_none(UserEmail, email=self.user_email)
-        email_settings = get_or_none(EmailSettings, user_email=user)
-        if not user or not email_settings or \
-                email_settings.subscription_set.count() == 0:
+        settings = get_or_none(EmailSettings,
+                               user_email__email__iexact=self.user_email)
+        if not settings or settings.subscription_set.count() == 0:
             self.warn('User {email} is not subscribed to any packages'.format(
                 email=self.user_email))
             return False
@@ -381,7 +382,7 @@ class UnsubscribeallCommand(Command):
         return True
 
     def handle(self):
-        user = get_or_none(UserEmail, email=self.user_email)
+        user = get_or_none(UserEmail, email__iexact=self.user_email)
         email_settings = get_or_none(EmailSettings, user_email=user)
         if user is None or email_settings is None:
             return

@@ -1,10 +1,10 @@
-# Copyright 2013 The Distro Tracker Developers
+# Copyright 2013-2016 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 from __future__ import unicode_literals
@@ -26,7 +26,9 @@ class Command(BaseCommand):
 
     The imported news' signature information is not automatically extracted.
     """
-    args = 'root-dir'
+
+    def add_arguments(self, parser):
+        parser.add_argument('rootdir')
 
     def get_directories(self, root_directory):
         return [
@@ -98,16 +100,14 @@ class Command(BaseCommand):
                 self.import_package_news(package_directory)
 
     def handle(self, *args, **kwargs):
-        if len(args) != 1:
+        if 'rootdir' not in kwargs or not kwargs['rootdir']:
             raise CommandError("Root directory of old news not provided")
         self.verbose = int(kwargs.get('verbosity', 1)) > 1
 
         # Hack to be able to set the date created field to something else
         # than now.
-        EmailNews._meta.get_field_by_name('datetime_created')[0]\
-            .auto_now_add = False
+        EmailNews._meta.get_field('datetime_created').auto_now_add = False
 
-        self.import_all_news(args[0])
+        self.import_all_news(kwargs['rootdir'])
 
-        EmailNews._meta.get_field_by_name('datetime_created')[0]\
-            .auto_now_add = True
+        EmailNews._meta.get_field('datetime_created').auto_now_add = True

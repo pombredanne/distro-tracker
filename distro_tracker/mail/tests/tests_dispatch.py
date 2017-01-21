@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 
-# Copyright 2013-2015 The Distro Tracker Developers
+# Copyright 2013-2016 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 """
@@ -14,33 +14,31 @@ This module contains the tests for the dispatch functionality
 (:py:mod:`distro_tracker.mail.dispatch` module) of distro-tracker.
 """
 from __future__ import unicode_literals
-from distro_tracker.test import TestCase
+from email.message import Message
+from datetime import timedelta
+import logging
+
 from django.core import mail
+from django.conf import settings
 from django.utils import timezone
 from django.utils.six.moves import mock
 
-from email.message import Message
-from datetime import timedelta
-
+from distro_tracker.accounts.models import UserEmail
+from distro_tracker.accounts.models import User
 from distro_tracker.core.models import PackageName, Subscription, Keyword
 from distro_tracker.core.models import Team
-from distro_tracker.accounts.models import User
 from distro_tracker.core.utils import verp
 from distro_tracker.core.utils import get_decoded_message_payload
 from distro_tracker.core.utils import distro_tracker_render_to_string
 from distro_tracker.core.utils.email_messages import (
     patch_message_for_django_compat)
 from distro_tracker.mail import dispatch
-from distro_tracker.accounts.models import UserEmail
-
 from distro_tracker.mail.models import UserEmailBounceStats
+from distro_tracker.test import TestCase
 
-
-from django.conf import settings
 DISTRO_TRACKER_CONTROL_EMAIL = settings.DISTRO_TRACKER_CONTROL_EMAIL
 DISTRO_TRACKER_FQDN = settings.DISTRO_TRACKER_FQDN
 
-import logging
 logging.disable(logging.CRITICAL)
 
 
@@ -266,12 +264,12 @@ class DispatchBaseTest(TestCase, DispatchTestHelperMixin):
         are found in the forwarded message.
         """
         headers = [
-            ('X-Loop', '{package}@{distro_tracker_fqdn}'.format(
-                package=self.package_name,
-                distro_tracker_fqdn=DISTRO_TRACKER_FQDN)),
+            ('X-Loop', 'dispatch@{}'.format(DISTRO_TRACKER_FQDN)),
             ('X-Distro-Tracker-Package', self.package_name),
             ('X-Distro-Tracker-Keyword', 'default'),
             ('Precedence', 'list'),
+            ('List-Id', '<{}.{}>'.format(self.package_name,
+                                         DISTRO_TRACKER_FQDN)),
             ('List-Unsubscribe',
                 '<mailto:{control_email}?body=unsubscribe%20{package}>'.format(
                     control_email=DISTRO_TRACKER_CONTROL_EMAIL,
@@ -348,7 +346,7 @@ class DispatchBaseTest(TestCase, DispatchTestHelperMixin):
         set.
         """
         self.set_header('X-Loop', 'somevalue')
-        self.set_header('X-Loop', self.package_name + '@' + DISTRO_TRACKER_FQDN)
+        self.set_header('X-Loop', 'dispatch@' + DISTRO_TRACKER_FQDN)
         self.subscribe_user_to_package('user@domain.com', self.package_name)
 
         self.run_forward()
@@ -449,6 +447,14 @@ class ClassifyMessageTests(TestCase):
         self.assertEqual(package, 'vendorpkg')
         self.assertEqual(keyword, 'default')
 
+    def test_classify_uses_values_supplied_in_headers(self):
+        self.message['X-Distro-Tracker-Package'] = 'headerpkg'
+        self.message['X-Distro-Tracker-Keyword'] = 'bugs'
+        self.patch_vendor_call()
+        package, keyword = self.run_classify()
+        self.assertEqual(package, 'headerpkg')
+        self.assertEqual(keyword, 'bugs')
+
 
 class BounceMessagesTest(TestCase, DispatchTestHelperMixin):
     """
@@ -492,13 +498,30 @@ class BounceMessagesTest(TestCase, DispatchTestHelperMixin):
         # Make sure the user has no prior bounce stats
         self.assertEqual(self.user.bouncestats_set.count(), 0)
 
-        dispatch.handle_bounces(self.create_bounce_address(self.user.email))
+        dispatch.handle_bounces(self.create_bounce_address(self.user.email),
+                                self.message)
 
         bounce_stats = self.user.bouncestats_set.all()
         self.assertEqual(bounce_stats.count(), 1)
         self.assertEqual(bounce_stats[0].date, timezone.now().date())
         self.assertEqual(bounce_stats[0].mails_bounced, 1)
         self.assertEqual(self.user.emailsettings.subscription_set.count(), 1)
+
+    def test_spam_bounce_ignored(self):
+        self.assertEqual(self.user.bouncestats_set.count(), 0)
+        self.message.set_payload(
+            """
+  someone@example.net
+    SMTP error from remote mail server after end of data:
+    host aspmx.l.google.com [2607:f8b0:400e:c02::1a]:
+    552-5.7.0 This message was blocked because its content presents a potential
+    552-5.7.0 security issue. Please visit
+    552-5.7.0  https://support.google.com/mail/?p=BlockedMessage to review our
+    552 5.7.0 message content and attachment content guidelines.
+            """)
+        dispatch.handle_bounces(self.create_bounce_address(self.user.email),
+                                self.message)
+        self.assertEqual(self.user.bouncestats_set.count(), 0)
 
     def test_bounce_over_limit(self):
         """
@@ -520,7 +543,8 @@ class BounceMessagesTest(TestCase, DispatchTestHelperMixin):
         self.assertTrue(len(packages_subscribed_to) > 0)
 
         # Receive a bounce message.
-        dispatch.handle_bounces(self.create_bounce_address(self.user.email))
+        dispatch.handle_bounces(self.create_bounce_address(self.user.email),
+                                self.message)
 
         # Assert that the user's subscriptions have been dropped.
         self.assertEqual(self.user.emailsettings.subscription_set.count(), 0)
@@ -553,7 +577,8 @@ class BounceMessagesTest(TestCase, DispatchTestHelperMixin):
         self.assertTrue(subscription_count > 0)
 
         # Receive a bounce message.
-        dispatch.handle_bounces(self.create_bounce_address(self.user.email))
+        dispatch.handle_bounces(self.create_bounce_address(self.user.email),
+                                self.message)
 
         # Assert that the user's subscriptions have not been dropped.
         self.assertEqual(self.user.emailsettings.subscription_set.count(),
@@ -576,11 +601,33 @@ class BounceMessagesTest(TestCase, DispatchTestHelperMixin):
         self.assertTrue(subscription_count > 0)
 
         # Receive a bounce message.
-        dispatch.handle_bounces(self.create_bounce_address(self.user.email))
+        dispatch.handle_bounces(self.create_bounce_address(self.user.email),
+                                self.message)
 
         # Assert that the user's subscriptions have not been dropped.
         self.assertEqual(self.user.emailsettings.subscription_set.count(),
                          subscription_count)
+
+    def test_bounce_recorded_with_differing_case(self):
+        self.subscribe_user_to_package('SomeOne@domain.com', 'dummy-package')
+        self.user = UserEmailBounceStats.objects.get(email='SomeOne@domain.com')
+
+        self.assertEqual(self.user.bouncestats_set.count(), 0)
+
+        dispatch.handle_bounces(
+            self.create_bounce_address('someone@domain.com'),
+            self.message)
+
+        bounce_stats = self.user.bouncestats_set.all()
+        self.assertEqual(bounce_stats.count(), 1)
+        self.assertEqual(bounce_stats[0].date, timezone.now().date())
+        self.assertEqual(bounce_stats[0].mails_bounced, 1)
+
+    def test_bounce_handler_with_unknown_user_email(self):
+        # This should just not generate any exception...
+        dispatch.handle_bounces(
+            self.create_bounce_address('unknown-user@domain.com'),
+            self.message)
 
 
 class BounceStatsTest(TestCase):
@@ -670,8 +717,8 @@ class DispatchToTeamsTests(DispatchTestHelperMixin, TestCase):
 
     def test_team_muted(self):
         """
-        Tests that a message is not forwarded to the user when he has muted
-        the team.
+        Tests that a message is not forwarded to the user when they
+        have muted the team.
         """
         email = self.user.main_email
         membership = self.team.team_membership_set.get(user_email__email=email)
@@ -685,8 +732,8 @@ class DispatchToTeamsTests(DispatchTestHelperMixin, TestCase):
 
     def test_message_forwarded(self):
         """
-        Tests that the message is forwarded to a team member when he has the
-        correct keyword.
+        Tests that the message is forwarded to a team member when they
+        have the correct keyword.
         """
         email = self.user.main_email
         membership = self.team.team_membership_set.get(user_email__email=email)
@@ -727,8 +774,9 @@ class DispatchToTeamsTests(DispatchTestHelperMixin, TestCase):
 
     def test_forward_multiple_teams(self):
         """
-        Tests that a user gets the same message multiple times when he is a
-        member of two teams that both have the same package.
+        Tests that a user gets the same message multiple times when
+        they are a member of two teams that both have the same
+        package.
         """
         new_team = Team.objects.create_with_slug(
             owner=self.user, name="Other team")

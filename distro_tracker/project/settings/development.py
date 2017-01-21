@@ -4,11 +4,10 @@ Appropriate settings to run during development.
 When running in development mode, selected.py should point to this file.
 """
 
-from .defaults import INSTALLED_APPS
+from .defaults import INSTALLED_APPS, TEMPLATES
 from .db_sqlite import DATABASES  # noqa
 
 DEBUG = True
-TEMPLATE_DEBUG = True
 
 ADMINS = ()
 
@@ -22,10 +21,10 @@ CACHES = {
     }
 }
 
-TEMPLATE_LOADERS = (
+TEMPLATES[0]['OPTIONS']['loaders'] = [
     'django.template.loaders.filesystem.Loader',
     'django.template.loaders.app_directories.Loader',
-)
+]
 
 XHR_SIMULATED_DELAY = 0.5
 

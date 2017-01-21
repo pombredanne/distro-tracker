@@ -2,11 +2,11 @@
 
 # Copyright 2013 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 
@@ -15,7 +15,6 @@ Tests for the Distro Tracker core views.
 """
 from __future__ import unicode_literals
 from distro_tracker.test import TestCase, TemplateTestsMixin
-from django.test.utils import override_settings
 from distro_tracker.core.models import BinaryPackage, BinaryPackageName
 from distro_tracker.core.models import SourcePackageName, SourcePackage
 from distro_tracker.core.models import PackageName, PseudoPackageName
@@ -25,8 +24,6 @@ import json
 
 from django.core.urlresolvers import reverse
 from django.conf import settings
-
-import os
 
 
 class PackageViewTest(TestCase):
@@ -356,8 +353,9 @@ class PackageAutocompleteViewTest(TestCase):
         response = json.loads(response.content.decode('utf-8'))
         self.assertEqual(len(response), 2)
         self.assertEqual(response[0], 'p')
-        self.assertEqual(len(response[1]), 1)
+        self.assertEqual(len(response[1]), 2)
         self.assertIn('package-dev', response[1])
+        self.assertIn('libpackage', response[1])
 
         # No packages given when there are no matching binary packages
         response = self.client.get(reverse('dtracker-api-package-autocomplete'),
@@ -383,16 +381,17 @@ class PackageAutocompleteViewTest(TestCase):
 
         # No packages given when there are no matching pseudo packages
         response = self.client.get(reverse('dtracker-api-package-autocomplete'),
-                                   {'package_type': 'pseudo', 'q': '-'})
+                                   {'package_type': 'pseudo', 'q': 'y'})
         response = json.loads(response.content.decode('utf-8'))
         self.assertEqual(len(response), 2)
-        self.assertEqual(response[0], '-')
+        self.assertEqual(response[0], 'y')
         self.assertEqual(len(response[1]), 0)
 
     def test_all_packages_autocomplete(self):
         """
         Tests the autocomplete functionality when the client does not specify
-        the type of package.
+        the type of package. The result should only contain source and pseudo
+        packages, no binary package.
         """
         response = self.client.get(reverse('dtracker-api-package-autocomplete'),
                                    {'q': 'p'})
@@ -400,17 +399,18 @@ class PackageAutocompleteViewTest(TestCase):
         response = json.loads(response.content.decode('utf-8'))
         self.assertEqual(len(response), 2)
         self.assertEqual(response[0], 'p')
-        self.assertEqual(len(response[1]), 3)
+        self.assertEqual(len(response[1]), 4)
         self.assertIn('package', response[1])
-        self.assertIn('package-dev', response[1])
         self.assertIn('pseudo-package', response[1])
+        self.assertIn('d-package', response[1])
+        self.assertIn('dummy-package', response[1])
 
         # No packages given when there are no matching packages
         response = self.client.get(reverse('dtracker-api-package-autocomplete'),
-                                   {'q': '-'})
+                                   {'q': '-dev'})
         response = json.loads(response.content.decode('utf-8'))
         self.assertEqual(len(response), 2)
-        self.assertEqual(response[0], '-')
+        self.assertEqual(response[0], '-dev')
         self.assertEqual(len(response[1]), 0)
 
     def test_no_query_given(self):
@@ -423,9 +423,6 @@ class PackageAutocompleteViewTest(TestCase):
         self.assertEqual(response.status_code, 404)
 
 
-@override_settings(TEMPLATE_DIRS=(os.path.join(
-    os.path.dirname(__file__),
-    'tests-data/tests-templates'),))
 class ActionItemJsonViewTest(TestCase):
     """
     Tests for the :class:`distro_tracker.core.views.ActionItemJsonView`.
@@ -435,6 +432,7 @@ class ActionItemJsonViewTest(TestCase):
         self.action_type = ActionItemType.objects.create(
             type_name='test',
             full_description_template='action-item-test.html')
+        self.add_test_template_dir()
 
     def test_item_exists(self):
         """

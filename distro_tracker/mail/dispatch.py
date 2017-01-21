@@ -1,10 +1,10 @@
-# Copyright 2013-2015 The Distro Tracker Developers
+# Copyright 2013-2016 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 """
@@ -12,37 +12,35 @@ Implements the processing of received package messages in order to dispatch
 them to subscribers.
 """
 from __future__ import unicode_literals
+from copy import deepcopy
+from datetime import datetime
+import logging
+import re
+
 from django.core.mail import get_connection
 from django.utils import six
 from django.utils import timezone
 from django.core.mail import EmailMessage
+from django.conf import settings
 
-from datetime import datetime
-
+from distro_tracker import vendor
+from distro_tracker.core.models import PackageName
+from distro_tracker.core.models import Keyword
+from distro_tracker.core.models import Team
 from distro_tracker.core.utils import extract_email_address_from_header
+from distro_tracker.core.utils import get_decoded_message_payload
 from distro_tracker.core.utils import get_or_none
 from distro_tracker.core.utils import distro_tracker_render_to_string
 from distro_tracker.core.utils import verp
-
 from distro_tracker.core.utils.email_messages import CustomEmailMessage
 from distro_tracker.core.utils.email_messages import (
     patch_message_for_django_compat)
 from distro_tracker.mail.models import UserEmailBounceStats
 
-from distro_tracker.core.models import PackageName
-from distro_tracker.core.models import Keyword
-from distro_tracker.core.models import Team
-from django.conf import settings
 DISTRO_TRACKER_CONTROL_EMAIL = settings.DISTRO_TRACKER_CONTROL_EMAIL
 DISTRO_TRACKER_FQDN = settings.DISTRO_TRACKER_FQDN
 
-from copy import deepcopy
-import re
-import logging
-
 logger = logging.getLogger(__name__)
-
-from distro_tracker import vendor
 
 
 class SkipMessage(Exception):
@@ -110,9 +108,8 @@ def forward(msg, package, keyword):
     logger.info("dispatch :: forward to %(package)s %(keyword)s :: %(msgid)s",
                 logdata)
     # Check loop
-    package_email = '{package}@{distro_tracker_fqdn}'.format(
-        package=package, distro_tracker_fqdn=DISTRO_TRACKER_FQDN)
-    if package_email in msg.get_all('X-Loop', ()):
+    dispatch_email = 'dispatch@{}'.format(DISTRO_TRACKER_FQDN)
+    if dispatch_email in msg.get_all('X-Loop', ()):
         # Bad X-Loop, discard the message
         logger.info('dispatch :: discarded %(msgid)s due to X-Loop', logdata)
         return
@@ -143,6 +140,11 @@ def classify_message(msg, package=None, keyword=None):
         forwarded.
 
     """
+    if package is None:
+        package = msg.get('X-Distro-Tracker-Package')
+    if keyword is None:
+        keyword = msg.get('X-Distro-Tracker-Keyword')
+
     result, implemented = vendor.call('classify_message', msg,
                                       package=package, keyword=keyword)
     if implemented:
@@ -192,11 +194,10 @@ def add_new_headers(received_message, package_name, keyword):
     :type keyword: string
     """
     new_headers = [
-        ('X-Loop', '{package}@{distro_tracker_fqdn}'.format(
-            package=package_name,
-            distro_tracker_fqdn=DISTRO_TRACKER_FQDN)),
+        ('X-Loop', 'dispatch@{}'.format(DISTRO_TRACKER_FQDN)),
         ('X-Distro-Tracker-Package', package_name),
         ('X-Distro-Tracker-Keyword', keyword),
+        ('List-Id', '<{}.{}>'.format(package_name, DISTRO_TRACKER_FQDN)),
     ]
 
     extra_vendor_headers, implemented = vendor.call(
@@ -377,7 +378,35 @@ def prepare_message(received_message, to_email, date):
     return message
 
 
-def handle_bounces(sent_to_address):
+def bounce_is_for_spam(message):
+    spam_bounce_re = [
+        # Google blocks executables files
+        # 552-5.7.0 This message was blocked because its content presents a[...]
+        # 552-5.7.0 security issue. Please visit
+        # 552-5.7.0  https://support.google.com/mail/?p=BlockedMessage to [...]
+        # 552 5.7.0 message content and attachment content guidelines. [...]
+        r"552-5.7.0 This message was blocked",
+        # host ...: 550 High probability of spam
+        # host ...: 554 5.7.1 Message rejected because it contains malware
+        # 550 Executable files are not allowed in compressed files.
+        r"55[0-9] .*(?:spam|malware|virus|[Ee]xecutable files)",
+    ]
+    # XXX: Handle delivery report properly
+    for part in message.walk():
+        if not part or part.is_multipart():
+            continue
+        text = get_decoded_message_payload(part)
+        if text is None:
+            continue
+        for line in text.splitlines()[0:15]:
+            for rule in spam_bounce_re:
+                if re.search(rule, line):
+                    return True
+
+    return False
+
+
+def handle_bounces(sent_to_address, message):
     """
     Handles a received bounce message.
 
@@ -395,11 +424,22 @@ def handle_bounces(sent_to_address):
     except ValueError:
         logger.warning('bounces :: invalid date in address %s', bounce_email)
         return
+
+    logger.info('bounces :: received one for %s/%s', user_email, date)
+    try:
+        user = UserEmailBounceStats.objects.get(email__iexact=user_email)
+    except UserEmailBounceStats.DoesNotExist:
+        logger.warning('bounces :: unknown user email %s', user_email)
+        return
+
+    if bounce_is_for_spam(message):
+        logger.info('bounces :: discarded spam bounce for %s/%s',
+                    user_email, date)
+        return
+
     UserEmailBounceStats.objects.add_bounce_for_user(email=user_email,
                                                      date=date)
 
-    logger.info('bounces :: received one for %s/%s', user_email, date)
-    user = UserEmailBounceStats.objects.get(email=user_email)
     if user.has_too_many_bounces():
         logger.info('bounces => %s has too many bounces', user_email)
 

@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 
-# Copyright 2013 The Distro Tracker Developers
+# Copyright 2013-2015 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 """
@@ -41,6 +41,7 @@ from email.utils import make_msgid
 from datetime import timedelta
 
 import re
+import six
 
 
 DISTRO_TRACKER_CONTACT_EMAIL = settings.DISTRO_TRACKER_CONTACT_EMAIL
@@ -345,19 +346,42 @@ class ControlBotBasic(EmailControlTest):
         self.assert_header_equal('To', self.message['From'])
         self.assert_header_equal('From', DISTRO_TRACKER_CONTACT_EMAIL)
         self.assert_header_equal('In-Reply-To', self.message['Message-ID'])
-        self.assert_header_equal(
-            'References',
-            ' '.join((self.message.get('References', ''),
-                      self.message['Message-ID']))
-        )
+        references = self.message['Message-ID']
+        if 'References' in self.message:
+            references = " " + self.message['References'] + references
+        self.assert_header_equal('References', references)
+
+    def test_response_when_headers_have_two_lines(self):
+        """
+        Tests that we don't fail when header fields (References, From, Subject)
+        contain multiple lines.
+        """
+        for sep in ["\n\t", "\n ", "\r\n "]:
+            self.set_header('References', "<foo@bar>" + sep + "<foo2@bar2>")
+            self.set_header('From', "This is long" + sep + "<foo@bar.baz>")
+            self.set_header('Subject', "This is a long" + sep + " subject")
+            self.set_input_lines(['help'])
+
+            self.control_process()
+
+    def test_response_when_empty_subject(self):
+        """
+        Tests that the subject of the response when there is no subject set in
+        the request is correct.
+        """
+        self.set_header('Subject', '')
+        self.set_input_lines(['help'])
+
+        self.control_process()
+
+        self.assert_header_equal('Subject', 'Re: Your mail')
 
     def test_response_when_no_subject(self):
         """
         Tests that the subject of the response when there is no subject set in
         the request is correct.
         """
-        self.set_input_lines(["thanks"])
-        self.set_header('Subject', '')
+        del self.message['Subject']
         self.set_input_lines(['help'])
 
         self.control_process()
@@ -524,6 +548,15 @@ class ControlBotBasic(EmailControlTest):
         self.assert_response_sent()
         self.assert_command_echo_in_response('# Message subject')
         self.assert_command_echo_in_response('help')
+
+    def test_ensure_no_failure_with_multiline_subject(self):
+        """Non-regression test for a failure with multi-line subjects"""
+        self.set_header('Subject', '=?utf-8?B?UkU66L2m6Ze05Li75Lu75LiO54+t6ZW'
+                        '/5Yiw5bqV5piv5LiN5piv55yf5q2j55qE6aKG5a+8?=\n\t'
+                        '=?utf-8?B?Ow==?=')
+        self.set_input_lines(['help'])
+
+        self.control_process()
 
     def test_end_processing_on_signature_delimiter(self):
         """
@@ -1620,8 +1653,8 @@ class SubscribeToPackageTest(EmailControlTest):
 
     def test_subscribe_when_user_already_subscribed(self):
         """
-        Tests the subscribe command in the case that the user is trying to
-        subscribe to a package he is already subscribed to.
+        Tests the subscribe command in the case that the user is
+        already subscribed to the package.
         """
         # Make sure the user is already subscribed.
         Subscription.objects.create_for(
@@ -1778,6 +1811,30 @@ class SubscribeToPackageTest(EmailControlTest):
         self.control_process()
 
         self.assert_error_in_response('Confirmation failed')
+
+    def test_subscribe_to_invalid_package_name(self):
+        self.set_input_lines(['subscribe /..abc'])
+        self.control_process()
+        self.assert_warning_in_response('Invalid package name: /..abc')
+
+    def test_bug_user_without_emailsettings(self):
+        """
+        Non-regression test for a failure when UserEmail has no associated
+        EmailSettings object.
+        """
+        user, _ = UserEmail.objects.get_or_create(email=self.user_email_address)
+        if six.PY3:
+            with self.assertRaisesRegex(Exception,
+                                        'UserEmail has no emailsettings'):
+                user.emailsettings
+        else:
+            with self.assertRaisesRegexp(Exception,
+                                         'UserEmail has no emailsettings'):
+                user.emailsettings
+
+        self.add_subscribe_command(self.package.name, self.user_email_address)
+
+        self.control_process()  # Must not raise anything
 
 
 class UnsubscribeFromPackageTest(EmailControlTest):
@@ -2365,8 +2422,8 @@ class JoinTeamCommandsTests(TeamCommandsMixin, EmailControlTest):
 
     def test_join_team_already_member(self):
         """
-        Tests that a user gets a warning when trying to join a team he is
-        already a member of.
+        Tests that a user gets a warning when trying to join a team
+        they are already a member of.
         """
         self.team.add_members([self.user_email])
         self.set_input_lines([self.get_join_command(self.team.slug,
@@ -2400,8 +2457,8 @@ class LeaveTeamCommandTests(TeamCommandsMixin, EmailControlTest):
 
     def test_leave_team(self):
         """
-        Tests the normal situation where the user leaves a team he is a
-        member of.
+        Tests the normal situation where the user leaves a team they
+        are a member of.
         """
         self.set_input_lines([self.get_leave_command(self.team.slug)])
 
@@ -2424,7 +2481,7 @@ class LeaveTeamCommandTests(TeamCommandsMixin, EmailControlTest):
 
         self.control_process()
 
-        # The user notified that he has left the team
+        # The response notified the user they left the team.
         self.assert_in_response(self.get_left_team_message(self.team))
         # The user is no longer a member of the team
         self.assertNotIn(self.user_email, self.team.members.all())
@@ -2446,7 +2503,7 @@ class LeaveTeamCommandTests(TeamCommandsMixin, EmailControlTest):
     def test_leave_team_not_member(self):
         """
         Tests that a warning is returned when the user tries to leave a team
-        that he is not a member of.
+        that they are not a member of.
         """
         self.team.remove_members([self.user_email])
         self.set_input_lines([self.get_leave_command(self.team.slug)])

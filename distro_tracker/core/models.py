@@ -1,14 +1,27 @@
-# Copyright 2013 The Distro Tracker Developers
+# Copyright 2013-2016 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 """Models for the :mod:`distro_tracker.core` app."""
 from __future__ import unicode_literals
+from email.utils import getaddresses
+from email.utils import parseaddr
+from email.iterators import typed_subpart_iterator
+from jsonfield import JSONField
+import os
+import hashlib
+import string
+import random
+import re
+
+from debian.debian_support import AptPkgVersion
+from debian import changelog as debian_changelog
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.utils import IntegrityError
 from django.utils import six
@@ -34,17 +47,6 @@ from distro_tracker.core.utils.email_messages import message_from_bytes
 from distro_tracker.core.utils.packages import package_hashdir
 from distro_tracker.core.utils.linkify import linkify
 
-from debian.debian_support import AptPkgVersion
-from debian import changelog as debian_changelog
-from email.utils import getaddresses
-from email.utils import parseaddr
-from email.iterators import typed_subpart_iterator
-
-import os
-import hashlib
-import string
-import random
-
 DISTRO_TRACKER_CONFIRMATION_EXPIRATION_DAYS = \
     settings.DISTRO_TRACKER_CONFIRMATION_EXPIRATION_DAYS
 
@@ -56,6 +58,7 @@ class Keyword(models.Model):
     """
     name = models.CharField(max_length=50, unique=True)
     default = models.BooleanField(default=False)
+    description = models.CharField(max_length=256, blank=True)
 
     def __str__(self):
         return self.name
@@ -306,6 +309,11 @@ class PackageName(models.Model):
             self.save()
         else:
             super(self, PackageName).delete(*args, **kwargs)
+
+    def save(self, *args, **kwargs):
+        if not re.match('[0-9a-z][-+.0-9a-z]+$', self.name):
+            raise ValidationError('Invalid package name: {}'.format(self.name))
+        models.Model.save(self, *args, **kwargs)
 
 
 class PseudoPackageName(PackageName):
@@ -564,7 +572,7 @@ class SubscriptionManager(models.Manager):
             did not even exist.
         """
         package = get_or_none(PackageName, name=package_name)
-        user_email = get_or_none(UserEmail, email=email)
+        user_email = get_or_none(UserEmail, email__iexact=email)
         email_settings = get_or_none(EmailSettings, user_email=user_email)
         if not package or not user_email or not email_settings:
             return False
@@ -589,7 +597,7 @@ class SubscriptionManager(models.Manager):
            clients should not count on chaining additional filters to the
            result.
         """
-        user_email = get_or_none(UserEmail, email=email)
+        user_email = get_or_none(UserEmail, email__iexact=email)
         email_settings = get_or_none(EmailSettings, user_email=user_email)
         if not user_email or not email_settings:
             return []
@@ -693,10 +701,6 @@ class Subscription(models.Model):
         return str(self.email_settings.user_email) + ' ' + str(self.package)
 
 
-from jsonfield import JSONField
-from django.core.exceptions import ValidationError
-
-
 @python_2_unicode_compatible
 class Architecture(models.Model):
     """
@@ -733,7 +737,7 @@ class Repository(models.Model):
     name = models.CharField(max_length=50, unique=True)
     shorthand = models.CharField(max_length=10, unique=True)
 
-    uri = models.URLField(max_length=200, verbose_name='URI')
+    uri = models.CharField(max_length=200, verbose_name='URI')
     public_uri = models.URLField(
         max_length=200,
         blank=True,
@@ -916,8 +920,8 @@ class Repository(models.Model):
             **kwargs
         )
 
-    @classmethod
-    def release_file_url(cls, base_url, suite):
+    @staticmethod
+    def release_file_url(base_url, suite):
         """
         Returns the URL of the Release file for a repository with the given
         base URL and suite name.
@@ -952,7 +956,7 @@ class Repository(models.Model):
         """Returns a boolean indicating whether the repository is used for
         development.
 
-        A developement repository is a repository where new
+        A development repository is a repository where new
         versions of packages tend to be uploaded. The list of development
         repositories can be provided in the list
         DISTRO_TRACKER_DEVEL_REPOSITORIES (it should contain codenames and/or
@@ -1025,8 +1029,8 @@ class ContributorName(models.Model):
     """
     Represents a contributor.
 
-    A single contributor, as identified by his email, may have different
-    written names in different contexts.
+    A single contributor, identified by email address, may have
+    different written names in different contexts.
     """
     contributor_email = models.ForeignKey(UserEmail)
     name = models.CharField(max_length=60, blank=True)
@@ -1396,7 +1400,7 @@ class PackageExtractedInfo(models.Model):
     Web pages.
     """
     package = models.ForeignKey(PackageName)
-    key = models.CharField(max_length='50')
+    key = models.CharField(max_length=50)
     value = JSONField()
 
     def __str__(self):
@@ -1665,8 +1669,8 @@ class EmailNews(News):
         msg = message_from_bytes(self.content)
         return get_decoded_message_payload(msg)
 
-    @classmethod
-    def get_email_news_parameters(self, message):
+    @staticmethod
+    def get_email_news_parameters(message):
         """
         Returns a dict representing default values for some :class:`EmailNews`
         fields based on the given email message.
@@ -2014,6 +2018,11 @@ class ActionItem(models.Model):
             'severity': {
                 'name': self.get_severity_display(),
                 'level': self.severity,
+                'label_type': {
+                    0: 'info',
+                    3: 'warning',
+                    4: 'danger',
+                }.get(self.severity, 'default')
             },
             'created': self.created_timestamp.strftime('%Y-%m-%d'),
             'updated': self.last_updated_timestamp.strftime('%Y-%m-%d'),

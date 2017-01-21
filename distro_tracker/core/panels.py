@@ -1,10 +1,10 @@
 # Copyright 2013 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 """Implements the core panels shown on package pages."""
@@ -25,6 +25,7 @@ from distro_tracker.core.models import PackageExtractedInfo
 from distro_tracker.core.models import MailingList
 from distro_tracker.core.models import News
 from distro_tracker.core.models import BinaryPackageBugStats
+from distro_tracker.core.templatetags.distro_tracker_extras import octicon
 from debian.debian_support import AptPkgVersion
 from collections import defaultdict
 
@@ -473,9 +474,8 @@ class VersionedLinks(BasePanel):
 
 class DscLinkProvider(VersionedLinks.LinkProvider):
     icons = [
-        mark_safe(
-            '<i title=".dsc, use dget on this link to retrieve source package"'
-            '   class="icon-download-alt"></i>'),
+        octicon('desktop-download',
+                '.dsc, use dget on this link to retrieve source package'),
     ]
 
     def get_link_for_icon(self, package, index):
@@ -546,7 +546,7 @@ class BinariesInformationPanel(BasePanel):
                 category['bug_count'] for category in bug_stats),
             'all_bugs_url': all_bugs_url,
             'categories': bug_stats,
-            }
+        }
 
     @cached_property
     def context(self):
@@ -671,7 +671,7 @@ class ListPanelMeta(PluginRegistry):
     A meta class for the :class:`ListPanel`. Makes sure that each subclass of
     :class:`ListPanel` has a new :class:`PanelItemProvider` subclass.
     """
-    def __init__(cls, name, bases, attrs):
+    def __init__(cls, name, bases, attrs):  # noqa
         super(ListPanelMeta, cls).__init__(name, bases, attrs)
         if name != 'NewBase':
             cls.ItemProvider = type(
@@ -731,6 +731,7 @@ class ListPanel(six.with_metaclass(ListPanelMeta, BasePanel)):
     @property
     def has_content(self):
         return bool(self.context['items'])
+
 
 # This should be a sort of "abstract" panel which should never be rendered on
 # its own, so it is removed from the list of registered panels.

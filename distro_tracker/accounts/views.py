@@ -1,10 +1,10 @@
-# Copyright 2013 The Distro Tracker Developers
+# Copyright 2013-2015 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 """Views for the :mod:`distro_tracker.accounts` app."""
@@ -14,9 +14,12 @@ from django.core.urlresolvers import reverse_lazy
 from django.shortcuts import get_object_or_404
 from django.shortcuts import render
 from django.shortcuts import redirect
+from django.http import HttpResponseBadRequest
 from django.http import HttpResponseForbidden
 from django.http import Http404
 from django.conf import settings
+from django.core.exceptions import ValidationError
+
 from distro_tracker.accounts.models import UserEmail
 from distro_tracker.core.utils import distro_tracker_render_to_string
 from distro_tracker.core.utils import render_to_json_response
@@ -181,16 +184,21 @@ class SubscribeUserToPackageView(LoginRequiredMixin, View):
                 return HttpResponseForbidden()
 
         # Create the subscriptions
-        for email in emails:
-            Subscription.objects.create_for(
-                package_name=package,
-                email=email)
+        json_result = {'status': 'ok'}
+        try:
+            for email in emails:
+                Subscription.objects.create_for(
+                    package_name=package,
+                    email=email)
+        except ValidationError as e:
+            json_result['status'] = 'failed'
+            json_result['error'] = e.message
 
         if request.is_ajax():
-            return render_to_json_response({
-                'status': 'ok',
-            })
+            return render_to_json_response(json_result)
         else:
+            if 'error' in json_result:
+                return HttpResponseBadRequest(json_result['error'])
             next = request.POST.get('next', None)
             if not next:
                 return redirect('dtracker-package-page', package_name=package)
@@ -283,7 +291,7 @@ class ChooseSubscriptionEmailView(LoginRequiredMixin, View):
 
 class ModifyKeywordsView(LoginRequiredMixin, View):
     """
-    Lets the logged in user modify his default keywords or
+    Lets the logged-in user modify their default keywords or
     subscription-specific keywords.
     """
     def get_keywords(self, keywords):
@@ -355,14 +363,14 @@ class ModifyKeywordsView(LoginRequiredMixin, View):
         email = request.GET['email']
 
         try:
-            user_email = request.user.useremail.get(email=email)
+            user_email = request.user.emails.get(email=email)
         except UserEmail.DoesNotExist:
             return HttpResponseForbidden()
 
         if 'package' in request.GET:
             package = request.GET['package']
             subscription = get_object_or_404(
-                Subscription, email_settings__user_emailr=user_email,
+                Subscription, email_settings__user_email=user_email,
                 package__name=package)
             context = {
                 'post': {

@@ -2,11 +2,11 @@
 
 # Copyright 2013 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 
@@ -31,10 +31,12 @@ from distro_tracker.core.models import Repository
 from distro_tracker.core.models import RepositoryFlag
 from distro_tracker.core.models import Architecture
 from distro_tracker.core.models import Team
+from distro_tracker.core.models import PackageExtractedInfo
 from distro_tracker.core.retrieve_data import UpdateRepositoriesTask
 from distro_tracker.core.retrieve_data import UpdateTeamPackagesTask
 from distro_tracker.core.retrieve_data import retrieve_repository_info
 from distro_tracker.core.retrieve_data import UpdateVersionInformation
+from distro_tracker.core.retrieve_data import UpdatePackageGeneralInformation
 from distro_tracker.test.utils import create_source_package
 from distro_tracker.test.utils import set_mock_response
 from distro_tracker.accounts.models import User, UserEmail
@@ -200,7 +202,7 @@ class RetrievePseudoPackagesTest(TestCase):
         self.populate_packages(self.packages)
         old_packages = self.packages
         self.packages = []
-        # Sanity check: there were no subscription-only packages originaly
+        # Sanity check: there were no subscription-only packages originally
         self.assertEqual(
             PackageName.objects.filter(source=False, binary=False,
                                        pseudo=False).count(),
@@ -349,8 +351,8 @@ class RetrieveSourcesInformationTest(TestCase):
         return os.path.join(os.path.dirname(__file__), 'tests-data', file_name)
         self.intercept_events_task.unregister_plugin()
 
-    def run_update(self):
-        run_task(UpdateRepositoriesTask)
+    def run_update(self, **kwargs):
+        run_task(UpdateRepositoriesTask, parameters=kwargs)
 
     def create_task_class(self, produces, depends_on, raises):
         """
@@ -396,7 +398,7 @@ class RetrieveSourcesInformationTest(TestCase):
 
     def assert_events_raised(self, events):
         """
-        Asserts that the update task emited all the given events.
+        Asserts that the update task emitted all the given events.
         """
         raised_event_names = [
             event.name
@@ -426,6 +428,9 @@ class RetrieveSourcesInformationTest(TestCase):
             'chromium-browser',
             [pkg.name for pkg in SourcePackageName.objects.all()]
         )
+        srcpkg = SourcePackage.objects.first()
+        self.assertEqual(srcpkg.dsc_file_name,
+                         'chromium-browser_27.0.1453.110-1~deb7u1.dsc')
         self.assertEqual(BinaryPackageName.objects.count(), 8)
         self.assert_events_raised([
             'new-source-package',
@@ -433,6 +438,24 @@ class RetrieveSourcesInformationTest(TestCase):
             'new-source-package-version',
             'new-source-package-version-in-repository',
         ] + ['new-binary-package'] * 8)
+
+    @mock.patch(
+        'distro_tracker.core.retrieve_data.AptCache.update_repositories')
+    def test_update_repositories_without_files_field(self,
+                                                     mock_update_repositories):
+        """
+        Tests that a new source package is created when a sources file is
+        updated.
+        """
+        self.set_mock_sources(mock_update_repositories,
+                              'Sources-without-Files-field')
+
+        self.run_update()
+
+        self.assertEqual(SourcePackageName.objects.count(), 1)
+        srcpkg = SourcePackage.objects.first()
+        self.assertEqual(srcpkg.dsc_file_name,
+                         'chromium-browser_27.0.1453.110-1~deb7u1.dsc')
 
     @mock.patch(
         'distro_tracker.core.retrieve_data.AptCache.update_repositories')
@@ -478,6 +501,28 @@ class RetrieveSourcesInformationTest(TestCase):
 
         self.assertEqual(SourcePackageName.objects.count(), 1)
         # No events emitted since nothing was done.
+        self.assertEqual(len(self.caught_events), 0)
+
+    @mock.patch(
+        'distro_tracker.core.retrieve_data.AptCache.update_repositories')
+    def test_update_repositories_force_changes(self, mock_update_repositories):
+        """
+        Tests that force_update=True will overwrite bad data even when
+        the version did not change.
+        """
+        self.set_mock_sources(mock_update_repositories, 'Sources')
+        self.run_update()
+        src = SourcePackage.objects.first()
+        src.architectures.clear()
+        self.assertEqual(len(src.architectures.all()), 0)
+
+        # Run it again.
+        self.clear_events()
+        self.run_update(force_update=True)
+        src = SourcePackage.objects.first()
+        self.assertNotEqual(len(src.architectures.all()), 0)
+
+        # No events emitted since there are no new packages
         self.assertEqual(len(self.caught_events), 0)
 
     @mock.patch(
@@ -1183,3 +1228,38 @@ class UpdateTeamPackagesTaskTests(TestCase):
         all_packages = [p.name for p in self.team.packages.all()]
         for source_package in team_maintainer_packages:
             self.assertIn(source_package.source_package_name.name, all_packages)
+
+
+class UpdatePackageGeneralInformationTest(TestCase):
+    """
+    Tests for the
+    :class:`distro_tracker.core.retrieve_data.UpdatePackageGeneralInformation`
+    task.
+    """
+
+    def setUp(self):
+        self.srcpkg = create_source_package({
+            'name': 'dummy-package',
+            'version': '1.0.0',
+            'maintainer': {
+                'name': 'John Doe',
+                'email': 'jdoe@debian.org'
+            },
+            'architectures': ['i386', 'amd64'],
+        })
+        self.repo1 = Repository.objects.create(name='repo1', shorthand='repo1')
+        SourcePackageRepositoryEntry.objects.create(
+            source_package=self.srcpkg, repository=self.repo1)
+
+    def test_UpdatePackageGeneralInformation_task(self):
+
+        # execute the task
+        task = UpdatePackageGeneralInformation(force_update=True)
+        task.execute()
+
+        # check that the task worked as expected
+        pkgdata = PackageExtractedInfo.objects.get(
+            package=self.srcpkg.source_package_name, key='general').value
+        self.assertEqual(pkgdata['name'], self.srcpkg.name)
+        self.assertEqual(pkgdata['version'], self.srcpkg.version)
+        self.assertListEqual(pkgdata['architectures'], ['amd64', 'i386'])

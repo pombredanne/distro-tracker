@@ -1,10 +1,10 @@
 # Copyright 2013 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 """
@@ -14,6 +14,7 @@ from __future__ import unicode_literals
 from django.db import models
 from django.conf import settings
 from django.utils.encoding import python_2_unicode_compatible
+from django_email_accounts.models import UserEmailManager
 from distro_tracker.core.models import UserEmail
 from distro_tracker.core.models import Confirmation, ConfirmationManager
 
@@ -58,7 +59,7 @@ class CommandConfirmation(Confirmation):
         return self.commands.splitlines()
 
 
-class UserEmailBounceStatsManager(models.Manager):
+class UserEmailBounceStatsManager(UserEmailManager):
     """
     A custom :py:class:`Manager <django.db.models.Manager>` for the
     :py:class:`UserEmailBounceStats` model.
@@ -76,7 +77,7 @@ class UserEmailBounceStatsManager(models.Manager):
         :param date: The date of the required stats
         :type date: :py:class:`datetime.datetime`
         """
-        user = self.get(email=email)
+        user = self.get(email__iexact=email)
         bounce_stats, created = user.bouncestats_set.get_or_create(date=date)
         if created:
             self.limit_bounce_information(email)
@@ -121,7 +122,7 @@ class UserEmailBounceStatsManager(models.Manager):
         Makes sure not to keep more records than the number of days set by
         DISTRO_TRACKER_MAX_DAYS_TOLERATE_BOUNCE
         """
-        user = self.get(email=email)
+        user = self.get(email__iexact=email)
         days = settings.DISTRO_TRACKER_MAX_DAYS_TOLERATE_BOUNCE
         for info in user.bouncestats_set.all()[days:]:
             info.delete()

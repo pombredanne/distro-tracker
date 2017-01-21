@@ -2,11 +2,11 @@
 
 # Copyright 2013 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 
@@ -16,9 +16,7 @@ Tests for the :mod:`distro_tracker.core.news_feed` module.
 from __future__ import unicode_literals
 
 from datetime import datetime
-import os
 
-from django.test.utils import override_settings
 from django.core.urlresolvers import reverse
 from xml.dom import minidom
 
@@ -31,9 +29,6 @@ from distro_tracker.core.models import EmailNews
 from distro_tracker.core.utils import message_from_bytes
 
 
-@override_settings(TEMPLATE_DIRS=(os.path.join(
-    os.path.dirname(__file__),
-    'tests-data/tests-templates'),))
 class NewsFeedTests(TestCase):
     """
     Tests the generation of the package news feed.
@@ -42,6 +37,7 @@ class NewsFeedTests(TestCase):
         self.package = PackageName.objects.create(
             source=True,
             name='dummy-package')
+        self.add_test_template_dir()
 
     def get_package_news_feed_url(self, package_name):
         return reverse('dtracker-package-rss-news-feed', kwargs={
@@ -357,5 +353,5 @@ class NewsFeedTests(TestCase):
 
         response = self.client.get(pkg_url)
 
-        self.assertIn('<a title="rss feed" href="{}">'.format(rss_url),
+        self.assertIn('<a href="{}">'.format(rss_url),
                       response.content.decode('utf8'))

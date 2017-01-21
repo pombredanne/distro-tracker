@@ -1,10 +1,10 @@
 # Copyright 2013-2015 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 """
@@ -100,8 +100,8 @@ def get_package_information_site_url(package_name,
 
 def get_developer_information_url(developer_email):
     """
-    The function should return a URL which displays extra information about a
-    developer, given his email.
+    The function should return a URL to extra information about a
+    developer, by email address.
 
     The function should return ``None`` if the vendor does not provide
     additional developer information or if it does not have the information for

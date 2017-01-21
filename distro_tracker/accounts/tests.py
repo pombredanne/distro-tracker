@@ -1,10 +1,10 @@
 # Copyright 2013 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 """
@@ -103,8 +103,8 @@ class UserTests(TestCase):
         Tests the
         :meth:`is_subscribed_to
         <distro_tracker.accounts.models.User.is_subscribed_to>`
-        method when the user is subscribed to the package with his main email
-        only.
+        method when the user is subscribed to the package with their
+        main email only.
         """
         email = self.user.emails.all()[0]
         Subscription.objects.create_for(
@@ -119,8 +119,8 @@ class UserTests(TestCase):
         Tests the
         :meth:`is_subscribed_to
         <distro_tracker.accounts.models.User.is_subscribed_to>`
-        method when the user is subscribed to the package with one of his
-        associated emails.
+        method when the user is subscribed to the package with one of
+        their associated emails.
         """
         email = self.user.emails.create(email='other-email@domain.com')
         Subscription.objects.create_for(
@@ -135,8 +135,8 @@ class UserTests(TestCase):
         Tests the
         :meth:`is_subscribed_to
         <distro_tracker.accounts.models.User.is_subscribed_to>`
-        method when the user is subscribed to the package with all of his
-        associated emails.
+        method when the user is subscribed to the package with all of
+        their associated emails.
         """
         self.user.emails.create(email='other-email@domain.com')
         for email in self.user.emails.all():
@@ -146,6 +146,9 @@ class UserTests(TestCase):
 
         self.assertTrue(self.user.is_subscribed_to(self.package))
         self.assertTrue(self.user.is_subscribed_to('dummy-package'))
+
+    def test_is_subscribed_to_on_non_existing_package(self):
+        self.assertFalse(self.user.is_subscribed_to('does-not-exist'))
 
     def test_unsubscribe_all(self):
         """
@@ -200,8 +203,8 @@ class SubscriptionsViewTests(TestCase):
 
     def test_one_email(self):
         """
-        Tests the scenario where the user only has one email associated with
-        his account.
+        Tests the scenario where the user's account only has one
+        associated email address.
         """
         self.subscribe_email_to_package(self.user.main_email, self.package_name)
 
@@ -222,8 +225,8 @@ class SubscriptionsViewTests(TestCase):
 
     def test_multiple_emails(self):
         """
-        Tests the scenario where the user has multiple emails associated with
-        his account.
+        Tests the scenario where the user's account has multiple
+        associated email addresses.
         """
         self.user.emails.create(email='other-email@domain.com')
         packages = [
@@ -333,6 +336,27 @@ class SubscribeUserToPackageViewTests(TestCase):
         }
         self.assertDictEqual(expected,
                              json.loads(response.content.decode('utf-8')))
+
+    def test_subscribe_user_invalid_package_name_ajax(self):
+        self.log_in_user()
+
+        bad_pkgname = '/../ '
+        response = self.post_to_view(bad_pkgname, self.user.main_email)
+
+        self.assertFalse(self.user.is_subscribed_to(bad_pkgname))
+        json_data = json.loads(response.content.decode('utf-8'))
+        self.assertEqual(json_data.get('status'), 'failed')
+        self.assertTrue(json_data.get('error'))
+
+    def test_subscribe_user_invalid_package_name(self):
+        self.log_in_user()
+
+        bad_pkgname = '/../ '
+        response = self.post_to_view(bad_pkgname, self.user.main_email,
+                                     ajax=False)
+
+        self.assertFalse(self.user.is_subscribed_to(bad_pkgname))
+        self.assertEqual(response.status_code, 400)
 
     def test_subscribe_not_logged_in(self):
         """

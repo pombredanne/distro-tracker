@@ -1,10 +1,10 @@
 # Copyright 2013 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 from __future__ import unicode_literals
@@ -34,6 +34,9 @@ class ConfirmationManager(models.Manager):
     """
     A custom manager for the :py:class:`Confirmation` model.
     """
+
+    MAX_TRIES = 10
+
     def generate_key(self, identifier):
         """
         Generates a random key for the given identifier.
@@ -57,9 +60,8 @@ class ConfirmationManager(models.Manager):
         :raises pts.mail.models.ConfirmationException: If it is unable to
             generate a unique key.
         """
-        MAX_TRIES = 10
         errors = 0
-        while errors < MAX_TRIES:
+        while errors < self.MAX_TRIES:
             confirmation_key = self.generate_key(identifier)
             try:
                 return self.create(confirmation_key=confirmation_key, **kwargs)
@@ -180,10 +182,29 @@ class User(AbstractBaseUser, PermissionsMixin):
         return self.get_full_name()
 
 
+class UserEmailManager(models.Manager):
+
+    def get_or_create(self, *args, **kwargs):
+        """
+        Replaces the default get_or_create() with one that matches
+        the email case-insensitively.
+        """
+        defaults = kwargs.get('defaults', {})
+        if 'email' in kwargs:
+            kwargs['email__iexact'] = kwargs['email']
+            defaults['email'] = kwargs['email']
+            del kwargs['email']
+        kwargs['defaults'] = defaults
+        return UserEmail.default_manager.get_or_create(*args, **kwargs)
+
+
 @python_2_unicode_compatible
 class UserEmail(models.Model):
     email = models.EmailField(max_length=244, unique=True)
     user = models.ForeignKey(User, related_name='emails', null=True)
+
+    objects = UserEmailManager()
+    default_manager = models.Manager()
 
     def __str__(self):
         return self.email

@@ -1,14 +1,15 @@
 # Copyright 2013 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 from __future__ import unicode_literals
 from django import forms
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django_email_accounts.models import UserEmail
 from django.contrib.auth.forms \
@@ -35,6 +36,12 @@ class UserCreationForm(forms.ModelForm):
     The created user has no privileges and its account is inactive until
     a confirmation link is followed.
     """
+
+    # Optional captcha
+    if getattr(settings, 'DJANGO_EMAIL_ACCOUNTS_USE_CAPTCHA', False):
+        import captcha.fields
+        captcha = captcha.fields.CaptchaField()
+
     class Meta:
         model = User
         fields = (
@@ -93,7 +100,8 @@ class ResetPasswordForm(forms.Form):
 
 class ChangePersonalInfoForm(forms.ModelForm):
     """
-    A form providing a way for the user to change his account's personal info.
+    A form providing a way for the user to change their account's
+    personal info.
     """
     class Meta:
         model = User

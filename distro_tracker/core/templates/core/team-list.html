@@ -1,10 +1,20 @@
 {% extends 'core/base.html' %}
 
-{% block content %}
-<div class="row-fluid" style="margin-bottom: 5px;">
-    <div class="text-center"><a href="{% url 'dtracker-teams-create' %}"<button class="btn">Create a new team</button></a></div>
+{% block title %}Teams | {{ block.super }}{% endblock %}
+
+{% block page-header-title %}
+<h1>List of teams</h1>
+{% endblock %}
+
+{% block page-header-right %}
+<div class="m-b-1">
+{% include 'accounts/user-widget.html' with logout_redirect=request.path %}
 </div>
-<ul class="list-group">
+<a href="{% url 'dtracker-teams-create' %}" class="btn btn-primary">Create a new team</a>
+{% endblock %}
+
+{% block content %}
+<ul class="list-group m-t-1">
 {% for team in team_list %}
 <li class="list-group-item">
     <span><a href="{{ team.get_absolute_url }}">{{ team }}</a></span>
@@ -14,14 +24,12 @@
 {% endfor %}
 </ul>
 {% if is_paginated %}
-<div class="text-center">
-<div class="pagination">
-<ul>
+<div class="text-xs-center">
+<ul class="pagination">
     {% for page in page_obj.paginator.page_range %}
-    <li {% if page_obj.number == page %}class="active"{% endif %}><a href="?page={{ page }}">{{ page }}</a></li>
+    <li class="page-item{% if page_obj.number == page %} active{% endif %}"><a class="page-link" href="?page={{ page }}">{{ page }}</a></li>
     {% endfor %}
 </ul>
-</div>
 </div>
 {% endif %}
 {% endblock %}

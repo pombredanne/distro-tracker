@@ -1,10 +1,10 @@
 # Copyright 2013 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 """Utilities for processing Debian package information."""
@@ -79,9 +79,10 @@ def extract_dsc_file_name(stanza):
     :type stanza: dict
 
     """
-    for file in stanza.get('files', []):
-        if file.get('name', '').endswith('.dsc'):
-            return file['name']
+    for field in ('checksums-sha256', 'checksums-sha1', 'files'):
+        for entry in stanza.get(field, []):
+            if entry.get('name', '').endswith('.dsc'):
+                return entry['name']
 
     return None
 
@@ -317,8 +318,9 @@ class AptCache(object):
         for entry in sources_list.list:
             for index_file in entry.index_files:
                 if os.path.basename(sources_file) in index_file.describe:
-                    split_description = index_file.describe.split()
-                    component_url = split_description[0] + split_description[1]
+                    base_url, component, _ = index_file.describe.split(None, 2)
+                    base_url = base_url.rstrip('/')
+                    component_url = base_url + '/' + component
                     break
         for repository in Repository.objects.all():
             if component_url in repository.component_urls:
@@ -354,7 +356,8 @@ class AptCache(object):
         """
         if filter_function is None:
             # Include all files if the filter function is not provided
-            filter_function = lambda x: True  # noqa
+            def filter_function(x):
+                return True
 
         return [
             file_name

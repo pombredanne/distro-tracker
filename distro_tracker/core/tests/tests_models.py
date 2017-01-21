@@ -2,11 +2,11 @@
 
 # Copyright 2013 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 
@@ -47,7 +47,6 @@ from distro_tracker.core.utils.email_messages import get_decoded_message_payload
 from distro_tracker.accounts.models import User, UserEmail
 from distro_tracker.test.utils import create_source_package
 
-import os
 import email
 import itertools
 
@@ -274,6 +273,14 @@ class UserEmailTest(TestCase):
         self.assertFalse(
             self.user_email.emailsettings.is_subscribed_to(self.package))
 
+    def test_is_subscribed_to_false_on_non_existing_package(self):
+        """
+        Tests that the ``is_subscribed_to`` method returns False when we
+        query about a non-existing package.
+        """
+        self.assertFalse(
+            self.user_email.emailsettings.is_subscribed_to('does-not-exist'))
+
     def test_new_user_has_default_keywords(self):
         """
         Tests that newly created users always have all the default keywords.
@@ -344,6 +351,10 @@ class PackageManagerTest(TestCase):
         self.package = PackageName.objects.create(
             source=True,
             name='dummy-package')
+
+    def test_package_create_fails_on_bad_package_name(self):
+        with self.assertRaises(ValidationError):
+            PackageName.objects.create(name='/../ b')
 
     def test_package_exists(self):
         self.assertTrue(PackageName.objects.exists_with_name(self.package.name))
@@ -1259,7 +1270,7 @@ class BinaryPackageTests(TestCase):
 
     def test_binary_package_name_to_source_name_default_repository(self):
         """
-        Tests retrieving a source package name from a bianry package name when
+        Tests retrieving a source package name from a binary package name when
         the resulting source package name should be the one from the default
         repository.
         """
@@ -1616,9 +1627,6 @@ class NewsTests(TestCase):
                       renderer.context['parts'][0])
 
 
-@override_settings(TEMPLATE_DIRS=(os.path.join(
-    os.path.dirname(__file__),
-    'tests-data/tests-templates'),))
 class ActionItemTests(TestCase):
     """
     Tests for the :class:`distro_tracker.core.models.ActionItem` model.
@@ -1626,6 +1634,7 @@ class ActionItemTests(TestCase):
     def setUp(self):
         self.package = PackageName.objects.create(name='dummy-package')
         self.action_type = ActionItemType.objects.create(type_name='test-type')
+        self.add_test_template_dir()
 
     def set_action_type_template(self, template_name):
         """

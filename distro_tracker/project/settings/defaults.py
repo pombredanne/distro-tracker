@@ -1,10 +1,10 @@
-# Copyright 2013-2014 The Distro Tracker Developers
+# Copyright 2013-2016 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 
@@ -121,17 +121,21 @@ of those settings.
 More settings:
 """
 from __future__ import unicode_literals
+import django
+from django.core.exceptions import ImproperlyConfigured
 from django.utils import six
 from os.path import dirname
 
 import socket
 import os.path
 
+if django.VERSION < (1, 8):
+    raise ImproperlyConfigured("Distro Tracker needs Django >= 1.8")
+
 six.add_move(six.MovedModule('mock', 'mock', 'unittest.mock'))
 
 # Django's debug mode, never enable this in production
 DEBUG = False
-TEMPLATE_DEBUG = DEBUG
 
 BASE_DIR = dirname(dirname(dirname(dirname(__file__))))
 DISTRO_TRACKER_DATA_PATH = os.path.join(BASE_DIR, 'data')
@@ -188,19 +192,39 @@ try:
 except IOError:
     SECRET_KEY = 'etu2#5lv=!0(g9l31mw=cpwhioy!egg60lb5o3_67d83#(wu-u'
 
-# List of callables that know how to import templates from various sources.
-TEMPLATE_LOADERS = (
-    ('django.template.loaders.cached.Loader', (
-        'django.template.loaders.filesystem.Loader',
-        'django.template.loaders.app_directories.Loader'
-    )),
-)
+# Templating rules
+TEMPLATES = [
+    {
+        'BACKEND': 'django.template.backends.django.DjangoTemplates',
+        'DIRS': [],
+        'OPTIONS': {
+            'context_processors': [
+                'django.contrib.auth.context_processors.auth',
+                'django.template.context_processors.debug',
+                'django.template.context_processors.i18n',
+                'django.template.context_processors.media',
+                'django.template.context_processors.static',
+                'django.template.context_processors.tz',
+                'django.contrib.messages.context_processors.messages',
+                'django.template.context_processors.request',
+                'distro_tracker.core.context_processors.extras',
+            ],
+            'loaders': [
+                ('django.template.loaders.cached.Loader', [
+                    'django.template.loaders.filesystem.Loader',
+                    'django.template.loaders.app_directories.Loader',
+                ]),
+            ],
+        }
+    },
+]
 
 MIDDLEWARE_CLASSES = (
     'django.middleware.common.CommonMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'django.contrib.auth.middleware.SessionAuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     # Disabled to allow rendering in iframes
     # 'django.middleware.clickjacking.XFrameOptionsMiddleware',
@@ -217,23 +241,6 @@ ROOT_URLCONF = 'distro_tracker.project.urls'
 # Python dotted path to the WSGI application used by Django's runserver.
 WSGI_APPLICATION = 'distro_tracker.project.wsgi.application'
 
-TEMPLATE_DIRS = (
-    # Put strings here, like "/home/html/django_templates".
-    # Always use forward slashes, even on Windows.
-    # Don't forget to use absolute paths, not relative paths.
-)
-TEMPLATE_CONTEXT_PROCESSORS = (
-    'django.contrib.auth.context_processors.auth',
-    'django.core.context_processors.debug',
-    'django.core.context_processors.i18n',
-    'django.core.context_processors.media',
-    'django.core.context_processors.static',
-    'django.core.context_processors.tz',
-    'django.contrib.messages.context_processors.messages',
-    'django.core.context_processors.request',
-    'distro_tracker.core.context_processors.extras',
-)
-
 INSTALLED_APPS = (
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -242,6 +249,7 @@ INSTALLED_APPS = (
     'django.contrib.staticfiles',
     'django.contrib.admin',
     'django_email_accounts',
+    'distro_tracker.html',
     'distro_tracker.core',
     'distro_tracker.accounts',
     'distro_tracker.mail',
@@ -340,12 +348,12 @@ LOGGING = {
             'level': 'DEBUG',
         },
         'distro_tracker.mail': {
-            'handlers': ['mail.log'],
+            'handlers': ['mail.log', 'mail_admins'],
             'level': 'DEBUG',
             'propagate': True,
         },
         'distro_tracker.tasks': {
-            'handlers': ['tasks.log'],
+            'handlers': ['tasks.log', 'mail_admins'],
             'level': 'DEBUG',
             'propagate': True,
         },
@@ -392,6 +400,9 @@ DISTRO_TRACKER_ACCEPT_UNQUALIFIED_EMAILS = False
 
 DJANGO_EMAIL_ACCOUNTS_POST_MERGE_HOOK = \
     'distro_tracker.accounts.hooks.post_merge'
+
+#: Whether we include a captcha check on the new user registration form
+DJANGO_EMAIL_ACCOUNTS_USE_CAPTCHA = False
 
 # The lambda functions are evaluated at the end of the settings import
 # logic. They provide default values to settings which have not yet been
@@ -440,7 +451,8 @@ def compute_default_settings(target):
             continue  # Settings is already defined
         target[setting] = value(target)
     # Extend TEMPLATE_DIRS with our directory
-    target['TEMPLATE_DIRS'] += (target['DISTRO_TRACKER_TEMPLATE_DIRECTORY'],)
+    target['TEMPLATES'][0]['DIRS'].append(
+        target['DISTRO_TRACKER_TEMPLATE_DIRECTORY'])
     # Update LOGGING with full paths
     for handler in target['LOGGING']['handlers'].values():
         if 'filename' not in handler or "/" in handler['filename']:

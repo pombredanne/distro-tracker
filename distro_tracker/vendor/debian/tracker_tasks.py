@@ -1,10 +1,10 @@
 # Copyright 2013 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 
@@ -16,6 +16,7 @@ from __future__ import unicode_literals
 from django.db import transaction
 from django.conf import settings
 from django.utils import six
+from django.utils.encoding import force_str
 from django.utils.http import urlencode
 from django.core.urlresolvers import reverse
 
@@ -808,7 +809,7 @@ class UpdateExcusesTask(BaseTask):
         Tracker package pages. Return the original text unmodified, otherwise.
         """
         re_anchor_href = re.compile(r'^#(.*)$')
-        html = soup(excuse)
+        html = soup(excuse, 'html.parser')
         for a_tag in html.findAll('a', {'href': True}):
             href = a_tag['href']
             match = re_anchor_href.match(href)
@@ -925,12 +926,10 @@ class UpdateExcusesTask(BaseTask):
 
         action_item.short_description = self.ITEM_DESCRIPTION
         if package.main_entry:
-            section = package.main_entry.section
-            if section not in ('contrib', 'non-free'):
-                query_string = urlencode({'package': package.name})
-                extra_data['check_why_url'] = (
-                    'https://release.debian.org/migration/testing.pl'
-                    '?{query_string}'.format(query_string=query_string))
+            query_string = urlencode({'package': package.name})
+            extra_data['check_why_url'] = (
+                'https://qa.debian.org/excuses.php'
+                '?{query_string}'.format(query_string=query_string))
 
         action_item.extra_data = extra_data
         action_item.save()
@@ -1104,14 +1103,10 @@ class DebianWatchFileScannerUpdate(BaseTask):
     ACTION_ITEM_TYPE_NAMES = (
         'new-upstream-version',
         'watch-failure',
-        'watch-file-broken',
-        'watch-file-available',
     )
     ACTION_ITEM_TEMPLATES = {
         'new-upstream-version': "debian/new-upstream-version-action-item.html",
         'watch-failure': "debian/watch-failure-action-item.html",
-        'watch-file-broken': "debian/watch-file-broken-action-item.html",
-        'watch-file-available': "debian/watch-file-available-action-item.html",
     }
     ITEM_DESCRIPTIONS = {
         'new-upstream-version': lambda item: (
@@ -1121,19 +1116,10 @@ class DebianWatchFileScannerUpdate(BaseTask):
                 version=item.extra_data['upstream_version'])),
         'watch-failure': lambda item: (
             'Problems while searching for a new upstream version'),
-        'watch-file-broken': lambda item: (
-            'Problem with the debian/watch file included in the package'),
-        'watch-file-available': lambda item: (
-            'An updated debian/watch file is '
-            '<a href="https://qa.debian.org/cgi-bin/watchfile.cgi'
-            '?package={package}">available</a>.'.format(
-                package=item.package.name)),
     }
     ITEM_SEVERITIES = {
         'new-upstream-version': ActionItem.SEVERITY_HIGH,
         'watch-failure': ActionItem.SEVERITY_HIGH,
-        'watch-file-broken': ActionItem.SEVERITY_LOW,
-        'watch-file-available': ActionItem.SEVERITY_WISHLIST,
     }
 
     def __init__(self, force_update=False, *args, **kwargs):
@@ -1151,16 +1137,8 @@ class DebianWatchFileScannerUpdate(BaseTask):
         if 'force_update' in parameters:
             self.force_update = parameters['force_update']
 
-    def _get_udd_dehs_content(self):
-        url = 'https://qa.debian.org/cgi-bin/udd-dehs'
-        return get_resource_content(url)
-
-    def _get_watch_broken_content(self):
-        url = 'https://qa.debian.org/watch/watch-broken.txt'
-        return get_resource_content(url)
-
-    def _get_watch_available_content(self):
-        url = 'https://qa.debian.org/watch/watch-avail.txt'
+    def _get_upstream_status_content(self):
+        url = 'https://udd.debian.org/cgi-bin/upstream-status.json.cgi'
         return get_resource_content(url)
 
     def _remove_obsolete_action_items(self, item_type_name,
@@ -1175,81 +1153,46 @@ class DebianWatchFileScannerUpdate(BaseTask):
             item_types=[action_item_type],
             non_obsolete_packages=non_obsolete_packages)
 
-    def get_udd_dehs_stats(self, stats):
+    def get_upstream_status_stats(self, stats):
         """
-        Gets the DEHS stats from the UDD and puts them in the given ``stats``
-        dictionary.
+        Gets the stats from the downloaded data and puts them in the given
+        ``stats`` dictionary.
         The keys of the dict are package names.
 
         :returns: A a two-tuple where the first item is a list of packages
             which have new upstream versions and the second is a list of
             packages which have watch failures.
         """
-        content = self._get_udd_dehs_content()
-        dehs_data = yaml.safe_load(six.BytesIO(content))
+        content = self._get_upstream_status_content()
+        dehs_data = None
+        if content:
+            dehs_data = json.loads(force_str(content))
         if not dehs_data:
             return [], []
 
         all_new_versions, all_failures = [], []
         for entry in dehs_data:
             package_name = entry['package']
-            if 'status' in entry and 'Newer version' in entry['status']:
+            if 'status' in entry and ('Newer version' in entry['status'] or
+                                      'newer package' in entry['status']):
                 stats.setdefault(package_name, {})
                 stats[package_name]['new-upstream-version'] = {
                     'upstream_version': entry['upstream-version'],
                     'upstream_url': entry['upstream-url'],
                 }
                 all_new_versions.append(package_name)
-            if 'warnings' in entry:
+            if entry.get('warnings') or entry.get('errors'):
                 stats.setdefault(package_name, {})
+                msg = '{}\n{}'.format(
+                    entry.get('errors') or '',
+                    entry.get('warnings') or '',
+                ).strip()
                 stats[package_name]['watch-failure'] = {
-                    'warning': entry['warnings'],
+                    'warning': msg,
                 }
                 all_failures.append(package_name)
 
         return all_new_versions, all_failures
-
-    def get_watch_broken_stats(self, stats):
-        """
-        Gets the stats of files which have broken watch files, as per
-        `<https://qa.debian.org/watch/watch-broken.txt>`_.
-        It updates the given dictionary ``stats`` to contain these stats
-        as an additional key ``watch-file-broken`` for each package that has
-        the stats.
-
-        :returns: A list of packages which have broken watch files.
-        """
-        content = self._get_watch_broken_content().decode('utf-8')
-        packages = []
-        for package_name in content.splitlines():
-            package_name = package_name.strip()
-            stats.setdefault(package_name, {})
-            # For now no extra data needed for this type of item.
-            stats[package_name]['watch-file-broken'] = None
-            packages.append(package_name)
-
-        return packages
-
-    def get_watch_available_stats(self, stats):
-        """
-        Gets the stats of files which have available watch files, as per
-        `<https://qa.debian.org/watch/watch-avail.txt>`_.
-        It updates the given dictionary ``stats`` to contain these stats
-        as an additional key ``watch-file-available`` for each package that has
-        the stats.
-
-        :returns: A list of packages which have available watch files.
-        """
-        content = self._get_watch_available_content().decode('utf-8')
-        packages = []
-        for package_name in content.splitlines():
-            package_name = package_name.strip()
-            stats.setdefault(package_name, {})
-            # For now no extra data needed for this type of item.
-            stats[package_name]['watch-file-available'] = None
-            packages.append(package_name)
-
-        return packages
 
     def update_action_item(self, item_type, package, stats):
         """
@@ -1286,16 +1229,13 @@ class DebianWatchFileScannerUpdate(BaseTask):
 
         action_item.save()
 
+    @transaction.atomic
     def execute(self):
         stats = {}
-        new_upstream_version, failures = self.get_udd_dehs_stats(stats)
-        watch_broken = self.get_watch_broken_stats(stats)
-        watch_available = self.get_watch_available_stats(stats)
+        new_upstream_version, failures = self.get_upstream_status_stats(stats)
         updated_packages_per_type = {
             'new-upstream-version': new_upstream_version,
             'watch-failure': failures,
-            'watch-file-broken': watch_broken,
-            'watch-file-available': watch_available,
         }
 
         # Remove obsolete action items for each of the categories...
@@ -1375,13 +1315,13 @@ class UpdateSecurityIssuesTask(BaseTask):
         return result
 
     @classmethod
-    def get_issues_stats(self, content):
+    def get_issues_stats(cls, content):
         """
         Gets package issue stats from Debian's security tracker.
         """
         stats = {}
         for pkg, issues in six.iteritems(content):
-            stats[pkg] = self.get_issues_summary(issues)
+            stats[pkg] = cls.get_issues_summary(issues)
         return stats
 
     @staticmethod
@@ -1424,11 +1364,11 @@ class UpdateSecurityIssuesTask(BaseTask):
                 self._get_short_description('none', action_item)
 
     @classmethod
-    def generate_package_data(self, issues):
+    def generate_package_data(cls, issues):
         return {
             'details': issues,
-            'stats': self.get_issues_summary(issues),
-            'checksum': self.get_data_checksum(issues)
+            'stats': cls.get_issues_summary(issues),
+            'checksum': cls.get_data_checksum(issues)
         }
 
     def process_pkg_action_items(self, pkgdata, existing_action_items):
@@ -1473,7 +1413,7 @@ class UpdateSecurityIssuesTask(BaseTask):
         # Fetch all debian-security ActionItems
         pkg_action_items = collections.defaultdict(lambda: [])
         all_action_items = ActionItem.objects.select_related(
-            'package__name').filter(
+            'package').filter(
                 item_type__type_name__startswith='debian-security-issue-in-')
         for action_item in all_action_items:
             pkg_action_items[action_item.package.name].append(action_item)
@@ -1519,8 +1459,7 @@ class UpdateSecurityIssuesTask(BaseTask):
                 package__name__in=content.keys()).delete()
             ActionItem.objects.filter(
                 item_type__type_name__startswith='debian-security-issue-in-'
-                ).exclude(
-                package__name__in=content.keys()).delete()
+            ).exclude(package__name__in=content.keys()).delete()
             ActionItem.objects.filter(
                 item_type__type_name__startswith='debian-security-issue-in-',
                 id__in=[ai.id for ai in ai_to_drop]).delete()
@@ -1616,129 +1555,6 @@ class UpdatePiuPartsTask(BaseTask):
 
         for package in packages:
             self.create_action_item(package, failing_packages[package.name])
-
-
-class UpdateReleaseGoalsTask(BaseTask):
-    """
-    Retrieves the release goals and any bugs associated with the release goal
-    for all packages. Creates :class:`ActionItem` instances for packages which
-    have such bugs.
-    """
-    ACTION_ITEM_TYPE_NAME = 'debian-release-goals-bugs'
-    ACTION_ITEM_TEMPLATE = 'debian/release-goals-action-item.html'
-    ITEM_DESCRIPTION = (
-        "{count} bugs must be fixed to meet some Debian release goals")
-
-    def __init__(self, force_update=False, *args, **kwargs):
-        super(UpdateReleaseGoalsTask, self).__init__(*args, **kwargs)
-        self.force_update = force_update
-        self.action_item_type = ActionItemType.objects.create_or_update(
-            type_name=self.ACTION_ITEM_TYPE_NAME,
-            full_description_template=self.ACTION_ITEM_TEMPLATE)
-
-    def set_parameters(self, parameters):
-        if 'force_update' in parameters:
-            self.force_update = parameters['force_update']
-
-    def _get_release_goals_content(self):
-        """
-        :returns: A tuple consisting of contents of the release goals list and
-            the release bug list. ``None`` if neither of the packages have
-            been when compared to the cached resource.
-        """
-        cache = HttpCache(settings.DISTRO_TRACKER_CACHE_DIRECTORY)
-        release_goals_url = 'https://release.debian.org/testing/goals.yaml'
-        bugs_list_url = 'https://udd.debian.org/pts-release-goals.cgi'
-        if not self.force_update and (
-                not cache.is_expired(release_goals_url) and
-                not cache.is_expired(bugs_list_url)):
-            return
-
-        release_goals_response, updated_release_goals = cache.update(
-            release_goals_url, force=self.force_update)
-        bug_list_response, updated_bug_list = cache.update(
-            bugs_list_url, force=self.force_update)
-
-        if updated_bug_list or updated_release_goals:
-            return release_goals_response.content, bug_list_response.content
-
-    def get_release_goals_stats(self):
-        content = self._get_release_goals_content()
-        if content is None:
-            return
-
-        release_goals_content, bug_list_content = content
-
-        release_goals = yaml.safe_load(release_goals_content)
-        release_goals_list = []
-        if release_goals:
-            release_goals_list = release_goals['release-goals']
-        # Map (user, tag) tuples to the release goals.
-        # This is used to match the bugs with the correct release goal.
-        release_goals = {}
-        for goal in release_goals_list:
-            if 'bugs' in goal:
-                user = goal['bugs']['user']
-                for tag in goal['bugs']['usertags']:
-                    release_goals[(user, tag)] = goal
-
-        release_goal_stats = {}
-        # Build a dict mapping package names to a list of bugs matched to a
-        # release goal.
-        bug_list = yaml.safe_load(bug_list_content) or []
-        for bug in bug_list:
-            user, tag = bug['email'], bug['tag']
-            if (user, tag) not in release_goals:
-                # Cannot match the bug with a release goal...
-                continue
-            release_goal = release_goals[(user, tag)]
-            if release_goal['state'] != 'accepted':
-                continue
-            package = bug['source']
-            release_goal_stats.setdefault(package, [])
-            release_goal_stats[package].append({
-                'name': release_goal['name'],
-                'url': release_goal['url'],
-                'id': bug['id'],
-            })
-
-        return release_goal_stats
-
-    def update_action_item(self, package, bug_list):
-        action_item = package.get_action_item_for_type(
-            self.ACTION_ITEM_TYPE_NAME)
-        if action_item is None:
-            action_item = ActionItem(
-                package=package,
-                item_type=self.action_item_type)
-
-        # Check if there were any changes to the package's stats since last
-        # update.
-        if action_item.extra_data:
-            old_data = sorted(action_item.extra_data, key=lambda x: x['id'])
-            bug_list = sorted(bug_list, key=lambda x: x['id'])
-            if old_data == bug_list:
-                # No need to update anything as nothing has changed
-                return
-        action_item.short_description = self.ITEM_DESCRIPTION.format(
-            count=len(bug_list))
-        action_item.extra_data = bug_list
-        action_item.save()
-
-    def execute(self):
-        stats = self.get_release_goals_stats()
-        if stats is None:
-            return
-
-        ActionItem.objects.delete_obsolete_items(
-            item_types=[self.action_item_type],
-            non_obsolete_packages=stats.keys())
-
-        packages = PackageName.objects.filter(name__in=stats.keys())
-        packages = packages.prefetch_related('action_items')
-
-        for package in packages:
-            self.update_action_item(package, stats[package.name])
 
 
 class UpdateUbuntuStatsTask(BaseTask):
@@ -2051,11 +1867,9 @@ class UpdateWnppStatsTask(BaseTask):
         }
         action_item.save()
 
-    def update_depneedsmaint_action_item(self, package_needs_maintainer):
-        short_description_template = (
-            'The package depends on source packages which need '
-            'a new maintainer.'
-        )
+    def update_depneedsmaint_action_item(self, package_needs_maintainer, stats):
+        short_description_template = \
+            'Depends on packages which need a new maintainer'
         package_needs_maintainer.get_absolute_url()
         action_item_type = ActionItemType.objects.create_or_update(
             type_name='debian-depneedsmaint',
@@ -2071,16 +1885,22 @@ class UpdateWnppStatsTask(BaseTask):
                     item_type=action_item_type,
                     extra_data={})
 
-            if package_needs_maintainer.name in action_item.extra_data:
-                if action_item.extra_data == dependency.details:
-                    # Nothing has changed
-                    continue
+            pkgdata = {
+                'bug': stats['bug_id'],
+                'details': dependency.details,
+            }
+
+            if (action_item.extra_data.get(package_needs_maintainer.name, {}) ==
+                    pkgdata):
+                # Nothing has changed
+                continue
+
             action_item.short_description = short_description_template
-            action_item.extra_data[package_needs_maintainer.name] = \
-                dependency.details
+            action_item.extra_data[package_needs_maintainer.name] = pkgdata
 
             action_item.save()
 
+    @transaction.atomic
     def execute(self):
         wnpp_stats = self.get_wnpp_stats()
         if wnpp_stats is None:
@@ -2107,15 +1927,22 @@ class UpdateWnppStatsTask(BaseTask):
             ],
             non_obsolete_packages=packages_depneeds_maint)
 
+        # Drop all reverse references
+        for ai in ActionItem.objects.filter(
+                item_type__type_name='debian-depneedsmaint'):
+            ai.extra_data = {}
+            ai.save()
+
         packages = SourcePackageName.objects.filter(name__in=wnpp_stats.keys())
         packages = packages.prefetch_related('action_items')
 
         for package in packages:
-            self.update_action_item(package, wnpp_stats[package.name])
+            stats = wnpp_stats[package.name]
+            self.update_action_item(package, stats)
             # Update action items for packages which depend on this one to
             # indicate that a dependency needs a new maintainer.
             if package.name in packages_need_maintainer:
-                self.update_depneedsmaint_action_item(package)
+                self.update_depneedsmaint_action_item(package, stats)
 
 
 class UpdateNewQueuePackages(BaseTask):
@@ -2263,7 +2090,7 @@ class UpdateDebciStatusTask(BaseTask):
         url = 'https://ci.debian.net/packages/' + log_dir + '/' + \
             package_name + '/'
         log = 'https://ci.debian.net/data/packages/unstable/amd64/' + \
-            log_dir + "/" + package_name + '/latest-autopkgtest/log'
+            log_dir + "/" + package_name + '/latest-autopkgtest/log.gz'
         debci_action_item.short_description = self.ITEM_DESCRIPTION.format(
             debci_url=url,
             log_url=log)
@@ -2356,14 +2183,17 @@ class UpdateAutoRemovalsStatsTask(BaseTask):
             removal_date=removal_date,
             bugs=', '.join(link.format(bug, bug) for bug in all_bugs))
 
+        if hasattr(stats['removal_date'], 'strftime'):
+            stats['removal_date'] = stats['removal_date'].strftime(
+                '%a %d %b %Y')
         action_item.extra_data = {
             'stats': stats,
-            'removal_date': stats['removal_date'].strftime('%a %d %b %Y'),
+            'removal_date': stats['removal_date'],
             'bugs': ', '.join(link.format(bug, bug) for bug in stats['bugs']),
             'bugs_dependencies': ', '.join(
                 link.format(bug, bug) for bug in bugs_dependencies),
             'buggy_dependencies': ' and '.join(
-                ['<a href="/pkg/{}">{}</a>'.format(
+                ['<a href="{}">{}</a>'.format(
                     reverse(
                         'dtracker-package-page',
                         kwargs={'package_name': p}),
@@ -2416,6 +2246,8 @@ class UpdatePackageScreenshotsTask(BaseTask):
 
     def execute(self):
         content = self._get_screenshots()
+        if content is None:
+            return
 
         packages_with_screenshots = []
         for item in content['packages']:
@@ -2446,7 +2278,7 @@ class UpdatePackageScreenshotsTask(BaseTask):
 
 
 class UpdateBuildReproducibilityTask(BaseTask):
-    BASE_URL = 'https://reproducible.debian.net'
+    BASE_URL = 'https://tests.reproducible-builds.org'
     ACTION_ITEM_TYPE_NAME = 'debian-build-reproducibility'
     ACTION_ITEM_TEMPLATE = 'debian/build-reproducibility-action-item.html'
     ITEM_DESCRIPTION = {
@@ -2473,7 +2305,7 @@ class UpdateBuildReproducibilityTask(BaseTask):
             self.force_update = parameters['force_update']
 
     def get_build_reproducibility(self):
-        url = '{}/reproducible-tracker.json'.format(self.BASE_URL)
+        url = '{}/debian/reproducible-tracker.json'.format(self.BASE_URL)
         cache = HttpCache(settings.DISTRO_TRACKER_CACHE_DIRECTORY)
         if not self.force_update and not cache.is_expired(url):
             return
@@ -2506,7 +2338,7 @@ class UpdateBuildReproducibilityTask(BaseTask):
                 item_type=self.action_item_type,
                 severity=ActionItem.SEVERITY_NORMAL)
 
-        url = "{}/rb-pkg/{}.html".format(self.BASE_URL, package.name)
+        url = "{}/debian/rb-pkg/{}.html".format(self.BASE_URL, package.name)
         action_item.short_description = description.format(url=url)
         action_item.save()
         return True
@@ -2539,3 +2371,81 @@ class UpdateBuildReproducibilityTask(BaseTask):
             ActionItem.objects.delete_obsolete_items([self.action_item_type],
                                                      packages)
             PackageExtractedInfo.objects.bulk_create(extracted_info)
+
+
+class MultiArchHintsTask(BaseTask):
+    ACTIONS_WEB = 'https://wiki.debian.org/MultiArch/Hints'
+    ACTIONS_URL = 'https://dedup.debian.net/static/multiarch-hints.yaml'
+    ACTION_ITEM_TYPE_NAME = 'debian-multiarch-hints'
+    ACTION_ITEM_TEMPLATE = 'debian/multiarch-hints.html'
+    ACTION_ITEM_DESCRIPTION = \
+        '<a href="{link}">Multiarch hinter</a> reports {count} issue(s)'
+
+    def __init__(self, force_update=False, *args, **kwargs):
+        super(MultiArchHintsTask, self).__init__(*args, **kwargs)
+        self.force_update = force_update
+        self.action_item_type = ActionItemType.objects.create_or_update(
+            type_name=self.ACTION_ITEM_TYPE_NAME,
+            full_description_template=self.ACTION_ITEM_TEMPLATE)
+        self.SEVERITIES = {}
+        for value, name in ActionItem.SEVERITIES:
+            self.SEVERITIES[name] = value
+
+    def set_parameters(self, parameters):
+        if 'force_update' in parameters:
+            self.force_update = parameters['force_update']
+
+    def get_data(self):
+        data = get_resource_content(self.ACTIONS_URL)
+        data = yaml.safe_load(data)
+        return data
+
+    def get_packages(self):
+        data = self.get_data()
+        if data['format'] != 'multiarch-hints-1.0':
+            return None
+        data = data['hints']
+        packages = collections.defaultdict(dict)
+        for item in data:
+            if 'source' not in item:
+                continue
+            package = item['source']
+            wishlist = ActionItem.SEVERITY_WISHLIST
+            severity = self.SEVERITIES.get(item['severity'], wishlist)
+            pkg_severity = packages[package].get('severity', wishlist)
+            packages[package]['severity'] = max(severity, pkg_severity)
+            packages[package].setdefault('hints', []).append(
+                (item['description'], item['link']))
+        return packages
+
+    def update_action_item(self, package, severity, description, extra_data):
+        action_item = package.get_action_item_for_type(
+            self.action_item_type.type_name)
+        if action_item is None:
+            action_item = ActionItem(
+                package=package,
+                item_type=self.action_item_type)
+        action_item.severity = severity
+        action_item.short_description = description
+        action_item.extra_data = extra_data
+        action_item.save()
+
+    def execute(self):
+        packages = self.get_packages()
+        if not packages:
+            return
+
+        with transaction.atomic():
+            for name, data in packages.items():
+                try:
+                    package = SourcePackageName.objects.get(name=name)
+                except SourcePackageName.DoesNotExist:
+                    continue
+
+                description = self.ACTION_ITEM_DESCRIPTION.format(
+                    count=len(data['hints']), link=self.ACTIONS_WEB)
+                self.update_action_item(package, data['severity'], description,
+                                        data['hints'])
+
+            ActionItem.objects.delete_obsolete_items([self.action_item_type],
+                                                     packages.keys())

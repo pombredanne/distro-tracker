@@ -1,10 +1,10 @@
 # Copyright 2013-2015 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 
@@ -85,12 +85,14 @@ def get_decoded_message_payload(message, default_charset='utf-8'):
         return None
     # Decodes the message based on transfer encoding and returns bytes
     payload = message.get_payload(decode=True)
+    if payload is None:
+        return None
 
     # The charset defaults to ascii if none is given
     charset = message.get_content_charset(default_charset)
     try:
         return payload.decode(charset)
-    except UnicodeDecodeError:
+    except (UnicodeDecodeError, LookupError):
         # If we did not get the charset right, assume it's latin1 and make
         # sure to not fail furter
         return payload.decode('latin1', 'replace')
@@ -219,7 +221,7 @@ def decode_header(header, default_encoding='utf-8'):
     insufficient.
     """
     if header is None:
-        return ''
+        return None
     decoded_header = email.header.decode_header(header)
     # Join all the different parts of the header into a single unicode string
     result = ''
@@ -237,3 +239,25 @@ def decode_header(header, default_encoding='utf-8'):
         else:
             result += part
     return result
+
+
+def unfold_header(header):
+    """
+    Unfolding is the process to remove the line wrapping added by mail agents.
+    An header is a single logical line and they are not allowed to be multi-line
+    values.
+
+    We need to unfold their values in particular when we want to reuse the
+    values to compose a reply message as Python's email API chokes on those
+    newline characters.
+
+    If header is None, the return value is None as well.
+
+    :param:header: the header value to unfold
+    :type param: str
+    :returns: the unfolded version of the header.
+    :rtype: str
+    """
+    if header is None:
+        return None
+    return re.sub(r'\r?\n(\s)', r'\1', header, 0, re.MULTILINE)

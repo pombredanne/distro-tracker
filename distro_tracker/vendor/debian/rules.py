@@ -1,21 +1,24 @@
 # Copyright 2013-2015 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 
 from __future__ import unicode_literals
+
+import os.path
 import re
-import urllib
 import requests
+
 from django import forms
 from django.utils.http import urlencode, urlquote
 from django.utils.safestring import mark_safe
 from django.conf import settings
+
 from distro_tracker.core.models import PackageBugStats
 from distro_tracker.core.models import EmailNews
 from distro_tracker.core.models import PackageName
@@ -52,13 +55,25 @@ def _classify_bts_message(msg, package, keyword):
     # associated to the mail, otherwise we will send multiple copies of a mail
     # that we already receive multiple times
     multi_allowed = package is None
-    package = _simplify_pkglist(pkglist, multi_allowed=multi_allowed,
-                                default=package)
-    debian_pr_message = msg.get('X-Debian-PR-Message', '')
-    if debian_pr_message.startswith('transcript'):
-        keyword = 'bts-control'
-    else:
-        keyword = 'bts'
+    pkg_result = _simplify_pkglist(pkglist, multi_allowed=multi_allowed,
+                                   default=package)
+
+    # We override the package/keyword only...
+    if package is None:  # When needed, because we don't have a suggestion
+        override_suggestion = True
+    else:  # Or when package suggestion matches the one found in the header
+        override_suggestion = package == pkg_result
+
+    if override_suggestion:
+        package = pkg_result
+
+    if override_suggestion or keyword is None:
+        debian_pr_message = msg.get('X-Debian-PR-Message', '')
+        if debian_pr_message.startswith('transcript'):
+            keyword = 'bts-control'
+        else:
+            keyword = 'bts'
+
     return (package, keyword)
 
 
@@ -90,6 +105,16 @@ def _classify_dak_message(msg, package, keyword):
 
 
 def classify_message(msg, package, keyword):
+    # Default values for git commit notifications
+    xgitrepo = msg.get('X-Git-Repo')
+    if xgitrepo:
+        if not package:
+            if xgitrepo.endswith('.git'):
+                xgitrepo = xgitrepo[:-4]
+            package = os.path.basename(xgitrepo)
+        if not keyword:
+            keyword = 'vcs'
+
     xloop = msg.get_all('X-Loop', ())
     xdebian = msg.get_all('X-Debian', ())
     testing_watch = msg.get('X-Testing-Watch-Package')
@@ -235,8 +260,7 @@ def get_package_information_site_url(package_name, source_package=False,
 
 def get_developer_information_url(developer_email):
     """
-    The function returns a URL which displays extra information about a
-    developer, given his email.
+    Return a URL to extra information about a developer, by email address.
     """
     URL_TEMPLATE = 'https://qa.debian.org/developer.php?email={email}'
     return URL_TEMPLATE.format(email=urlquote(developer_email))
@@ -269,22 +293,17 @@ def get_maintainer_extra(developer_email, package_name=None):
      - Whether the maintainer agrees with lowthreshold NMU
      - Whether the maintainer is a Debian Maintainer
     """
-    developer = get_or_none(DebianContributor, email__email=developer_email)
-    if not developer:
-        # Debian does not have any extra information to include in this case.
-        return None
+    developer = get_or_none(DebianContributor,
+                            email__email__iexact=developer_email)
     extra = []
-    if developer.agree_with_low_threshold_nmu:
+    _add_dmd_entry(extra, developer_email)
+    if developer and developer.agree_with_low_threshold_nmu:
         extra.append({
             'display': 'LowNMU',
             'description': 'maintainer agrees with Low Threshold NMU',
             'link': 'https://wiki.debian.org/LowThresholdNmu',
         })
-    if package_name and developer.is_debian_maintainer:
-        if package_name in developer.allowed_packages:
-            extra.append({
-                'display': 'dm',
-            })
+    _add_dm_entry(extra, developer, package_name)
     return extra
 
 
@@ -295,18 +314,29 @@ def get_uploader_extra(developer_email, package_name=None):
 
      - Whether the uploader is a DebianMaintainer
     """
-    if package_name is None:
-        return
+    developer = get_or_none(DebianContributor,
+                            email__email__iexact=developer_email)
 
-    developer = get_or_none(DebianContributor, email__email=developer_email)
-    if not developer:
-        return
+    extra = []
+    _add_dmd_entry(extra, developer_email)
+    _add_dm_entry(extra, developer, package_name)
+    return extra
 
-    if developer.is_debian_maintainer:
+
+def _add_dmd_entry(extra, email):
+    extra.append({
+        'display': 'DMD',
+        'description': 'UDD\'s Debian Maintainer Dashboard',
+        'link': 'https://udd.debian.org/dmd/?{email}#todo'.format(
+            email=urlquote(email)
+        )
+    })
+
+
+def _add_dm_entry(extra, developer, package_name):
+    if package_name and developer and developer.is_debian_maintainer:
         if package_name in developer.allowed_packages:
-            return [{
-                'display': 'dm',
-            }]
+            extra.append({'display': 'dm'})
 
 
 def allow_package(stanza):
@@ -475,7 +505,7 @@ def get_bug_tracker_url(package_name, package_type, category_name):
     return (
         domain +
         'cgi-bin/pkgreport.cgi?' +
-        urllib.urlencode(query_parameters)
+        urlencode(query_parameters)
     )
 
 
@@ -740,11 +770,13 @@ def get_extra_versions(package):
 
 def pre_login(form):
     """
-    If the user has a @debian.org email associated, don't let him log in
-    directly through local authentication.
+    If the user has a @debian.org email associated, don't let them log
+    in directly through local authentication.
     """
     username = form.cleaned_data.get('username')
-    user_email = get_or_none(UserEmail, email=username)
+    if not username:
+        return
+    user_email = get_or_none(UserEmail, email__iexact=username)
     emails = [username]
     if user_email and user_email.user:
         emails += [x.email for x in user_email.user.emails.all()]
@@ -759,7 +791,8 @@ def pre_login(form):
 
 def post_logout(request, user, next_url=None):
     """
-    If the user is authenticated via the SSO, sign him out at the SSO level too.
+    If the user is authenticated via the SSO, sign them out at the SSO
+    level too.
     """
     if request.META.get('REMOTE_USER'):
         if next_url is None:

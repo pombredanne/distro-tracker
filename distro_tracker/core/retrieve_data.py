@@ -1,10 +1,10 @@
 # Copyright 2013 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 """Implements core data retrieval from various external resources."""
@@ -270,7 +270,7 @@ class UpdateRepositoriesTask(PackageUpdateTask):
             uploaders = []
             for email, name in zip(uploader_emails, uploader_names):
                 if email not in existing_contributor_emails:
-                    contributor_email = UserEmail.objects.create(
+                    contributor_email, _ = UserEmail.objects.get_or_create(
                         email=email)
                     existing_contributor_emails[email] = contributor_email
                 else:
@@ -309,13 +309,14 @@ class UpdateRepositoriesTask(PackageUpdateTask):
                 source_package_name=src_pkg_name,
                 version=stanza['version']
             )
-            if created_new_version:
-                self.raise_event('new-source-package-version', {
-                    'name': src_pkg.name,
-                    'version': src_pkg.version,
-                    'pk': src_pkg.pk,
-                })
-                # Since it's a new version, extract package data from Sources
+            if created_new_version or self.force_update:
+                if created_new_version:
+                    self.raise_event('new-source-package-version', {
+                        'name': src_pkg.name,
+                        'version': src_pkg.version,
+                        'pk': src_pkg.pk,
+                    })
+                # Extract package data from Sources
                 entry = self._extract_information_from_sources_entry(
                     src_pkg, stanza)
                 # Update the source package information based on the newly
@@ -801,7 +802,7 @@ class UpdateRepositoriesTask(PackageUpdateTask):
                                                 default_repository)
 
         # Create all the model instances in one transaction
-        self.log("Commiting SourcePackagesDeps to database")
+        self.log("Committing SourcePackagesDeps to database")
         SourcePackageDeps.objects.all().delete()
         SourcePackageDeps.objects.bulk_create(dependency_instances)
 
@@ -838,19 +839,21 @@ class UpdatePackageGeneralInformation(PackageUpdateTask):
         self.packages.add(event.arguments['name'])
 
     def _get_info_from_entry(self, entry):
+        srcpkg = entry.source_package
         general_information = {
-            'name': entry.source_package.name,
+            'name': srcpkg.name,
             'priority': entry.priority,
             'section': entry.section,
             'version': entry.source_package.version,
-            'maintainer': entry.source_package.maintainer.to_dict(),
+            'maintainer': srcpkg.maintainer.to_dict(),
             'uploaders': [
                 uploader.to_dict()
-                for uploader in entry.source_package.uploaders.all()
+                for uploader in srcpkg.uploaders.all()
             ],
-            'architectures': map(str, entry.source_package.architectures.all()),
-            'standards_version': entry.source_package.standards_version,
-            'vcs': entry.source_package.vcs,
+            'architectures': list(
+                map(str, srcpkg.architectures.order_by('name'))),
+            'standards_version': srcpkg.standards_version,
+            'vcs': srcpkg.vcs,
         }
 
         return general_information

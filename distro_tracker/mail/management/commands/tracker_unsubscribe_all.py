@@ -1,10 +1,10 @@
-# Copyright 2013 The Distro Tracker Developers
+# Copyright 2013-2016 The Distro Tracker Developers
 # See the COPYRIGHT file at the top-level directory of this distribution and
-# at http://deb.li/DTAuthors
+# at https://deb.li/DTAuthors
 #
 # This file is part of Distro Tracker. It is subject to the license terms
 # in the LICENSE file found in the top-level directory of this
-# distribution and at http://deb.li/DTLicense. No part of Distro Tracker,
+# distribution and at https://deb.li/DTLicense. No part of Distro Tracker,
 # including this file, may be copied, modified, propagated, or distributed
 # except according to the terms contained in the LICENSE file.
 """
@@ -22,15 +22,16 @@ class Command(BaseCommand):
     A Django management command which removes all subscriptions for the given
     emails.
     """
-    args = 'email [email ...]'
-
     help = "Removes all package subscriptions for the given emails."
 
+    def add_arguments(self, parser):
+        parser.add_argument('emails', nargs='+')
+
     def handle(self, *args, **kwargs):
-        if len(args) == 0:
+        if len(kwargs['emails']) == 0:
             raise CommandError('At least one email must be given.')
         verbosity = int(kwargs.get('verbosity', 1))
-        for email in args:
+        for email in kwargs['emails']:
             out = self._remove_subscriptions(email)
             if verbosity >= 1:
                 self.stdout.write(out)
@@ -45,7 +46,7 @@ class Command(BaseCommand):
         :returns: A message explaining the result of the operation.
         :rtype: string
         """
-        user = get_or_none(UserEmail, email=email)
+        user = get_or_none(UserEmail, email__iexact=email)
         if not user:
             return ('Email {email} is not subscribed to any packages. '
                     'Bad email?'.format(email=email))
